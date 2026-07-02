@@ -403,20 +403,17 @@
 
 <!-- Live Sync (DM): publish game state + manage who's currently traveling together -->
 <div class="modal-overlay" id="live-sync-modal">
-  <div class="modal" style="min-width:340px;">
+  <div class="modal" style="min-width:380px;max-height:85vh;display:flex;flex-direction:column;">
     <h2>🌐 Live Sync</h2>
     <p id="live-sync-status" style="margin-bottom:10px;color:var(--text-dim);">Not connected.</p>
-    <div style="margin-bottom:10px;">
+    <div style="margin-bottom:12px;">
       <button class="btn btn-gold" onclick="publishLiveUpdate()">📡 Publish Now</button>
     </div>
-    <p style="margin-bottom:6px;font-size:.65rem;color:var(--text-dim);">Check two or more PCs who are currently traveling together, then group them. Players see a merged view only while grouped here.</p>
-    <div class="char-select-list" id="live-sync-pc-list" style="max-height:180px;overflow-y:auto;"></div>
-    <div style="display:flex;gap:6px;margin:8px 0;">
-      <button class="btn" style="font-size:.5rem;padding:3px 7px;" onclick="groupCheckedPcs()">Group Checked</button>
-      <button class="btn" style="font-size:.5rem;padding:3px 7px;" onclick="clearPartyGroups()">Clear All Groups</button>
+    <p style="margin-bottom:8px;font-size:.65rem;color:var(--text-dim);">Groups merge live views for players currently traveling together. Every add/remove/delete below publishes immediately — no separate publish step needed.</p>
+    <div style="margin-bottom:10px;">
+      <button class="btn" style="font-size:.55rem;" onclick="createNewGroup()">+ New Group</button>
     </div>
-    <div class="cell-info-label" style="margin-bottom:3px;">Current Groups</div>
-    <div id="live-sync-groups-summary" style="font-size:.65rem;color:var(--text);margin-bottom:10px;">No active groups — everyone travels solo.</div>
+    <div id="live-sync-groups-list" style="flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:10px;"></div>
     <div class="modal-buttons">
       <button class="btn" onclick="document.getElementById('live-sync-modal').classList.remove('active')">Close</button>
     </div>
@@ -2568,7 +2565,8 @@ function resetGame() {
   // Reset is the one explicit action that actually clears persisted progress —
   // wipe the cloud save too so a resumed session doesn't come back stale, and
   // drop any live party groupings from the game that just ended.
-  liveSyncPartyGroups = [];
+  liveSyncGroups = {};
+  liveSyncGroupCounter = 0;
   if (liveSyncSignedIn && typeof window.liveSyncClear === 'function') {
     window.liveSyncClear().catch(err => console.warn('Cloud clear failed:', err.message));
   }
@@ -2963,7 +2961,10 @@ function applyDMSave(data) {
 // party groupings) instead of a locally loaded file — used by enterDmSetup when
 // a game is already in progress from a prior session.
 function applyCloudDMState(data) {
-  liveSyncPartyGroups = normalizePartyGroups(data.parties);
+  liveSyncGroups = data.parties || {};
+  liveSyncGroupCounter = Object.keys(liveSyncGroups)
+    .map(id => parseInt((/^Group (\d+)$/.exec(id) || [])[1]) || 0)
+    .reduce((max, n) => Math.max(max, n), 0);
   applyDMSave(data);
   setStatus(`Resumed from cloud — Round ${round}.`);
 }
@@ -3789,20 +3790,18 @@ function exportFinalZonePlayers() {
 
 // ── LIVE SYNC (Firebase) ────────────────────────────────────
 // The DM is the sole writer; players only ever read via a live subscription, so
-// there's no concurrent-write conflict to resolve. Party groupings are in-memory
-// only (reset on DM reload) — they describe who currently sees whose combined,
-// merged view while traveling together; ungrouping reverts each PC to solo.
-let liveSyncPartyGroups = [];   // in-memory shape: array of pid arrays, e.g. [["13_0","14_0"]]
+// there's no concurrent-write conflict to resolve. Party groups are in-memory
+// only (reset on DM reload, restored on cloud resume) — they describe who
+// currently sees whose combined, merged view while traveling together.
+//
+// Stored as a plain object keyed by group name -> array of pids, e.g.
+// { "Group 1": ["13_0","14_0"] }. NOT an array of arrays — Firestore rejects
+// arrays nested directly inside arrays, but a map (object) whose values are
+// arrays is completely fine, so this shape is safe to write as-is.
+let liveSyncGroups = {};
+let liveSyncGroupCounter = 0;
 let liveSyncSignedIn = false;
 let lastLivePids = null, lastLiveName = null; // player: remembered for the Refresh button
-
-// Firestore rejects arrays nested directly inside arrays ("Nested arrays are not
-// supported"). liveSyncPartyGroups is an array of pid-arrays, so it must be
-// wrapped as an array of maps ({pids:[...]}) before it can be written, and
-// unwrapped back on the way in.
-function normalizePartyGroups(raw) {
-  return (raw || []).map(entry => Array.isArray(entry) ? entry : (entry?.pids || []));
-}
 
 function buildLiveStateData() {
   return {
@@ -3814,7 +3813,7 @@ function buildLiveStateData() {
     cellStates: Object.fromEntries(
       Object.entries(cellStates).map(([k,v]) => [k, {state:v.state, events:[...v.events], occupants:[...v.occupants], casualties:[...(v.casualties||[])]}])
     ),
-    parties: liveSyncPartyGroups.map(pids => ({pids})),
+    parties: liveSyncGroups,
   };
 }
 
@@ -3823,7 +3822,7 @@ function enterDmLiveSync() {
   // Already signed in from entering DM mode — just open the panel.
   if (liveSyncSignedIn) {
     document.getElementById('live-sync-status').textContent = 'Signed in — ready to publish.';
-    renderPartyGroupsUI();
+    renderGroupsPanel();
     document.getElementById('live-sync-modal').classList.add('active');
     return;
   }
@@ -3839,72 +3838,170 @@ function enterDmLiveSync() {
   window.liveSyncSignInDM().then(() => {
     liveSyncSignedIn = true;
     document.getElementById('live-sync-status').textContent = 'Signed in — ready to publish.';
-    renderPartyGroupsUI();
+    renderGroupsPanel();
     document.getElementById('live-sync-modal').classList.add('active');
   }).catch(err => alert('Sign-in failed: ' + err.message));
 }
 
-function renderPartyGroupsUI() {
-  const list = document.getElementById('live-sync-pc-list');
+// Rebuilds the group cards: each group's current members (with a remove button),
+// a delete-group button, and a select+Add control to bring in another character.
+function renderGroupsPanel() {
+  const list = document.getElementById('live-sync-groups-list');
   list.innerHTML = '';
-  PLAYER_TEAM_INDICES.forEach(ti => {
-    const team = teams[ti];
-    team.memberIds.forEach(pid => {
-      const p = getParticipant(pid);
-      const id = `lsgrp-${pid}`;
-      const row = document.createElement('div');
-      row.style.cssText = 'padding:4px 2px;display:flex;align-items:center;gap:8px;';
-      row.innerHTML = `<input type="checkbox" id="${id}" data-pid="${pid}" style="accent-color:${team.color};width:14px;height:14px;cursor:pointer;">
-        <div style="width:8px;height:8px;border-radius:50%;background:${team.color};flex-shrink:0;"></div>
-        <label for="${id}" style="cursor:pointer;flex:1;color:${team.color};font-size:.68rem;">${p.name}<span style="color:var(--text-dim);margin-left:6px;">${team.name}</span></label>`;
-      list.appendChild(row);
+  const groupIds = Object.keys(liveSyncGroups);
+  if (!groupIds.length) {
+    list.innerHTML = '<div style="color:var(--text-dim);font-size:.65rem;">No groups yet — everyone travels solo. Click "+ New Group" to pair up PCs who are currently traveling together.</div>';
+    return;
+  }
+  groupIds.forEach(groupId => {
+    const memberPids = liveSyncGroups[groupId] || [];
+    const card = document.createElement('div');
+    card.style.cssText = 'background:var(--surface2);border:1px solid var(--border-bright);border-radius:2px;padding:8px 10px;';
+
+    const header = document.createElement('div');
+    header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;';
+    const label = document.createElement('span');
+    label.style.cssText = 'font-family:\'Cinzel\',serif;font-size:.62rem;letter-spacing:1px;color:var(--gold);text-transform:uppercase;';
+    label.textContent = `${groupId} (${memberPids.length})`;
+    const delBtn = document.createElement('button');
+    delBtn.className = 'btn btn-danger';
+    delBtn.style.cssText = 'font-size:.48rem;padding:2px 6px;';
+    delBtn.textContent = '🗑 Delete';
+    delBtn.onclick = () => deleteGroup(groupId);
+    header.appendChild(label);
+    header.appendChild(delBtn);
+    card.appendChild(header);
+
+    if (!memberPids.length) {
+      const empty = document.createElement('div');
+      empty.style.cssText = 'font-size:.6rem;color:var(--text-dim);margin-bottom:6px;';
+      empty.textContent = 'No members yet.';
+      card.appendChild(empty);
+    } else {
+      memberPids.forEach(pid => {
+        const p = getParticipant(pid);
+        if (!p) return;
+        const team = teams[p.teamIndex];
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:6px;padding:2px 0;';
+        const dot = document.createElement('div');
+        dot.style.cssText = `width:7px;height:7px;border-radius:50%;background:${team.color};flex-shrink:0;`;
+        const nameSpan = document.createElement('span');
+        nameSpan.style.cssText = `flex:1;font-size:.62rem;color:${team.color};`;
+        nameSpan.textContent = p.name;
+        const rmBtn = document.createElement('button');
+        rmBtn.style.cssText = 'background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:.6rem;';
+        rmBtn.textContent = '✕';
+        rmBtn.title = 'Remove from group';
+        rmBtn.onclick = () => removePidFromGroup(groupId, pid);
+        row.appendChild(dot); row.appendChild(nameSpan); row.appendChild(rmBtn);
+        card.appendChild(row);
+      });
+    }
+
+    const addRow = document.createElement('div');
+    addRow.style.cssText = 'display:flex;gap:5px;margin-top:6px;';
+    const select = document.createElement('select');
+    select.style.cssText = 'flex:1;font-size:.6rem;background:var(--surface);color:var(--text);border:1px solid var(--border-bright);border-radius:2px;padding:3px;';
+    PLAYER_TEAM_INDICES.forEach(ti => {
+      teams[ti].memberIds.forEach(pid => {
+        if (memberPids.includes(pid)) return;
+        const p = getParticipant(pid);
+        const elsewhereId = groupIds.find(gid => gid !== groupId && (liveSyncGroups[gid]||[]).includes(pid));
+        const opt = document.createElement('option');
+        opt.value = pid;
+        opt.textContent = `${p.name}${elsewhereId ? ` (currently in ${elsewhereId})` : ''}`;
+        select.appendChild(opt);
+      });
     });
+    if (!select.options.length) {
+      const none = document.createElement('div');
+      none.style.cssText = 'font-size:.58rem;color:var(--text-dim);';
+      none.textContent = 'All characters already in this group.';
+      addRow.appendChild(none);
+    } else {
+      const addBtn = document.createElement('button');
+      addBtn.className = 'btn';
+      addBtn.style.cssText = 'font-size:.5rem;padding:3px 8px;';
+      addBtn.textContent = 'Add';
+      addBtn.onclick = () => { if (select.value) addPidToGroup(groupId, select.value); };
+      addRow.appendChild(select);
+      addRow.appendChild(addBtn);
+    }
+    card.appendChild(addRow);
+
+    list.appendChild(card);
   });
-  renderCurrentGroupsSummary();
 }
 
-function renderCurrentGroupsSummary() {
-  const el = document.getElementById('live-sync-groups-summary');
-  if (!liveSyncPartyGroups.length) { el.textContent = 'No active groups — everyone travels solo.'; return; }
-  el.innerHTML = liveSyncPartyGroups
-    .map(g => g.map(pid => getParticipant(pid)?.name || pid).join(' + '))
-    .map(t => `<div style="padding:2px 0;">${t}</div>`).join('');
+function createNewGroup() {
+  liveSyncGroupCounter++;
+  liveSyncGroups[`Group ${liveSyncGroupCounter}`] = [];
+  renderGroupsPanel();
+  publishLiveUpdate();
 }
 
-function groupCheckedPcs() {
-  const checked = [...document.querySelectorAll('#live-sync-pc-list input:checked')].map(i => i.dataset.pid);
-  if (checked.length < 2) { alert('Check at least two characters who are currently traveling together.'); return; }
-  // A PC can only be in one live group at a time — drop them from any prior group first.
-  liveSyncPartyGroups = liveSyncPartyGroups
-    .map(g => g.filter(pid => !checked.includes(pid)))
-    .filter(g => g.length > 1);
-  liveSyncPartyGroups.push(checked);
-  document.querySelectorAll('#live-sync-pc-list input:checked').forEach(i => i.checked = false);
-  renderCurrentGroupsSummary();
+function deleteGroup(groupId) {
+  delete liveSyncGroups[groupId];
+  renderGroupsPanel();
+  publishLiveUpdate();
 }
 
-function clearPartyGroups() {
-  liveSyncPartyGroups = [];
-  renderCurrentGroupsSummary();
+function addPidToGroup(groupId, pid) {
+  // A PC can only be in one live group at a time — drop them from any other group first.
+  Object.keys(liveSyncGroups).forEach(gid => {
+    liveSyncGroups[gid] = liveSyncGroups[gid].filter(p => p !== pid);
+  });
+  liveSyncGroups[groupId].push(pid);
+  renderGroupsPanel();
+  publishLiveUpdate();
 }
 
+function removePidFromGroup(groupId, pid) {
+  if (!liveSyncGroups[groupId]) return;
+  liveSyncGroups[groupId] = liveSyncGroups[groupId].filter(p => p !== pid);
+  renderGroupsPanel();
+  publishLiveUpdate();
+}
+
+// Publishes the current state and gives explicit success/failure feedback in the
+// Live Sync panel — wrapped in try/catch because Firestore's setDoc() can throw
+// synchronously on invalid data (before ever returning a promise to .catch()).
 function publishLiveUpdate() {
   if (!liveSyncSignedIn) { alert('Not signed in yet.'); return; }
-  window.liveSyncPush(buildLiveStateData()).then(() => {
-    document.getElementById('live-sync-status').textContent = `Published — ${new Date().toLocaleTimeString()}`;
-    addLog('Live game state published.', 'system', null);
-  }).catch(err => alert('Publish failed: ' + err.message));
+  const statusEl = document.getElementById('live-sync-status');
+  try {
+    window.liveSyncPush(buildLiveStateData()).then(() => {
+      if (statusEl) statusEl.textContent = `✓ Published — ${new Date().toLocaleTimeString()}`;
+      addLog('Live game state published.', 'system', null);
+    }).catch(err => {
+      if (statusEl) statusEl.textContent = `✗ Publish failed: ${err.message}`;
+      alert('Publish failed: ' + err.message);
+    });
+  } catch (err) {
+    if (statusEl) statusEl.textContent = `✗ Publish failed: ${err.message}`;
+    alert('Publish failed: ' + err.message);
+  }
 }
 
 // Fired automatically on Next Round. Silent by design — if live sync was never
-// turned on this session (liveSyncSignedIn false) or a push happens to fail, it
-// just skips/logs quietly rather than interrupting gameplay with a popup.
+// turned on this session (liveSyncSignedIn false) it just skips. A failed publish
+// still surfaces in the status line/console so it's never silently lost, but
+// doesn't block gameplay with a popup.
 function autoPublishLiveUpdate() {
   if (!liveSyncSignedIn || typeof window.liveSyncPush !== 'function') return;
-  window.liveSyncPush(buildLiveStateData()).then(() => {
-    const statusEl = document.getElementById('live-sync-status');
-    if (statusEl) statusEl.textContent = `Published — ${new Date().toLocaleTimeString()}`;
-  }).catch(err => console.warn('Auto-publish failed:', err.message));
+  const statusEl = document.getElementById('live-sync-status');
+  try {
+    window.liveSyncPush(buildLiveStateData()).then(() => {
+      if (statusEl) statusEl.textContent = `✓ Published — ${new Date().toLocaleTimeString()}`;
+    }).catch(err => {
+      if (statusEl) statusEl.textContent = `✗ Auto-publish failed: ${err.message}`;
+      console.warn('Auto-publish failed:', err.message);
+    });
+  } catch (err) {
+    if (statusEl) statusEl.textContent = `✗ Auto-publish failed: ${err.message}`;
+    console.warn('Auto-publish failed:', err.message);
+  }
 }
 
 // Player: called by the Firebase module whenever a new snapshot arrives. Restores
@@ -3942,9 +4039,9 @@ function applyLiveGameState(data, myPids, myName) {
     logEntries = data.logEntries ? [...data.logEntries] : [];
     logTypeFilter = 'all'; logPidFilters = null;
 
-    const groups = normalizePartyGroups(data.parties);
+    const groups = Object.values(data.parties || {});
     const extraFromGroups = groups
-      .filter(g => g.some(pid => myPids.includes(pid)))
+      .filter(g => Array.isArray(g) && g.some(pid => myPids.includes(pid)))
       .flat();
     const effectivePids = [...new Set([...myPids, ...extraFromGroups])];
 
