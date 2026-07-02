@@ -966,6 +966,10 @@ function buildHexGrid() {
       border.setAttribute('stroke', isPerim ? '#2a2a40' : '#232333');
       border.setAttribute('stroke-width', isPerim ? '1' : '0.8');
       border.setAttribute('id',`hex-border-${c}-${r}`);
+      // Explicit per-element pointer-events:none, not just on the parent group —
+      // a click landing on a border line must always pass through to the cell's
+      // own <g> underneath (in a different parent), never dead-end on this layer.
+      border.setAttribute('pointer-events', 'none');
       bordersLayer.appendChild(border);
     }
   }
