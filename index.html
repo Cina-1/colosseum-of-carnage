@@ -2963,7 +2963,7 @@ function applyDMSave(data) {
 // party groupings) instead of a locally loaded file — used by enterDmSetup when
 // a game is already in progress from a prior session.
 function applyCloudDMState(data) {
-  liveSyncPartyGroups = data.parties || [];
+  liveSyncPartyGroups = normalizePartyGroups(data.parties);
   applyDMSave(data);
   setStatus(`Resumed from cloud — Round ${round}.`);
 }
@@ -3792,9 +3792,17 @@ function exportFinalZonePlayers() {
 // there's no concurrent-write conflict to resolve. Party groupings are in-memory
 // only (reset on DM reload) — they describe who currently sees whose combined,
 // merged view while traveling together; ungrouping reverts each PC to solo.
-let liveSyncPartyGroups = [];   // array of pid arrays, e.g. [["13_0","14_0"]]
+let liveSyncPartyGroups = [];   // in-memory shape: array of pid arrays, e.g. [["13_0","14_0"]]
 let liveSyncSignedIn = false;
 let lastLivePids = null, lastLiveName = null; // player: remembered for the Refresh button
+
+// Firestore rejects arrays nested directly inside arrays ("Nested arrays are not
+// supported"). liveSyncPartyGroups is an array of pid-arrays, so it must be
+// wrapped as an array of maps ({pids:[...]}) before it can be written, and
+// unwrapped back on the way in.
+function normalizePartyGroups(raw) {
+  return (raw || []).map(entry => Array.isArray(entry) ? entry : (entry?.pids || []));
+}
 
 function buildLiveStateData() {
   return {
@@ -3806,7 +3814,7 @@ function buildLiveStateData() {
     cellStates: Object.fromEntries(
       Object.entries(cellStates).map(([k,v]) => [k, {state:v.state, events:[...v.events], occupants:[...v.occupants], casualties:[...(v.casualties||[])]}])
     ),
-    parties: liveSyncPartyGroups,
+    parties: liveSyncPartyGroups.map(pids => ({pids})),
   };
 }
 
@@ -3934,9 +3942,9 @@ function applyLiveGameState(data, myPids, myName) {
     logEntries = data.logEntries ? [...data.logEntries] : [];
     logTypeFilter = 'all'; logPidFilters = null;
 
-    const groups = data.parties || [];
+    const groups = normalizePartyGroups(data.parties);
     const extraFromGroups = groups
-      .filter(g => Array.isArray(g) && g.some(pid => myPids.includes(pid)))
+      .filter(g => g.some(pid => myPids.includes(pid)))
       .flat();
     const effectivePids = [...new Set([...myPids, ...extraFromGroups])];
 
