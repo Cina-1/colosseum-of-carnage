@@ -258,8 +258,8 @@
     <div class="grid-toolbar">
       <!-- Row 1: game flow actions + status -->
       <div class="toolbar-row">
-        <button class="btn btn-gold dm-only" onclick="randomizePlacements()">⚄ Randomize</button>
-        <button class="btn dm-only" onclick="clearAllPlacements()">Clear Grid</button>
+        <button class="btn btn-gold dm-only" id="btn-randomize" onclick="randomizePlacements()">⚄ Randomize</button>
+        <button class="btn dm-only" id="btn-clear-grid" onclick="clearAllPlacements()">Clear Grid</button>
         <button class="btn btn-green dm-only" id="btn-start" onclick="startGame()" style="display:none;">▶ Begin the Games</button>
         <button class="btn dm-only" id="btn-next-round" onclick="nextRound()" style="display:none;">Next Round</button>
         <button class="btn btn-npc dm-only" id="btn-npc-auto" onclick="runNpcAuto()" style="display:none;">⚡ NPC Auto</button>
@@ -274,6 +274,7 @@
         <button class="btn" id="btn-back-to-title" style="display:none;" onclick="returnToTitle()">← Title</button>
         <button class="btn" id="btn-live-refresh" style="display:none;" onclick="refreshLiveView()" title="Manually re-fetch the latest game state">🔄 Refresh</button>
         <button class="btn" id="btn-zones" onclick="toggleZones()" title="Toggle zone ring visibility">⬡ Zones</button>
+        <button class="btn dm-only" id="btn-zone-pause" onclick="toggleZonePause()" title="Freeze the zone at its current size">⏸ Pause Zone</button>
         <div style="display:flex;align-items:center;gap:4px;margin-left:auto;">
           <button class="btn" onclick="adjustZoom(-0.15)" title="Zoom Out">−</button>
           <span id="zoom-label" style="font-family:'Share Tech Mono',monospace;font-size:.6rem;color:var(--text-dim);min-width:36px;text-align:center;">100%</span>
@@ -778,6 +779,8 @@ let logPidFilters = null;  // null = all, or Set of pids
 let pendingMoveLog = null; // stored during roll modal to bundle move+event into one entry
 let npcProcessedThisRound = new Set(); // pids that have already acted this round
 let showZones = true; // toggle for the closing ring zone overlay
+let zonePaused = false;      // when true, the zone stops shrinking at zoneFreezeRound
+let zoneFreezeRound = null;  // round the zone was frozen at, while paused
 let collapsedTeams = new Set();     // team indices the DM has manually collapsed
 let expandedElimTeams = new Set();  // eliminated teams the DM has manually re-expanded
 let finalZoneCombatDone = false;    // one-shot flag for the Final Zone mass combat
@@ -1658,9 +1661,10 @@ function renderHexGrid() {
     svg.appendChild(fzGroup);
   }
 
-  // Closing ring — orange mass on all cells in the closed zone (round 3+), with outer perimeter border
-  if (showZones && round >= 3 && gamePhase !== 'setup') {
-    const numClosed = round - 2;
+  // Closing ring — orange mass on all cells in the closed zone (round 4+), with outer perimeter border
+  const zoneRound = zonePaused && zoneFreezeRound != null ? zoneFreezeRound : round;
+  if (showZones && zoneRound >= 4 && gamePhase !== 'setup') {
+    const numClosed = zoneRound - 3;
     const closedMinDist = HEX_RADIUS - numClosed + 1;
 
     // Build closed zone set
@@ -2219,6 +2223,8 @@ function startGame() {
   document.getElementById('btn-start').style.display = 'none';
   document.getElementById('btn-next-round').style.display = 'inline-block';
   document.getElementById('btn-npc-auto').style.display = 'inline-block';
+  document.getElementById('btn-randomize').style.display = 'none';
+  document.getElementById('btn-clear-grid').style.display = 'none';
   setStatus('The Games have begun. Select a participant and move them.');
   addLog('⚔ The Games Have Begun — Round 1', 'round');
   updateStats();
@@ -2454,6 +2460,19 @@ function toggleZones() {
   renderHexGrid();
 }
 
+function toggleZonePause() {
+  zonePaused = !zonePaused;
+  zoneFreezeRound = zonePaused ? round : null;
+  const btn = document.getElementById('btn-zone-pause');
+  if (btn) {
+    btn.textContent = zonePaused ? '▶ Resume Zone' : '⏸ Pause Zone';
+    btn.style.borderColor = zonePaused ? 'var(--gold)' : '';
+    btn.style.color = zonePaused ? 'var(--gold)' : '';
+  }
+  setStatus(zonePaused ? `Zone paused at its Round ${zoneFreezeRound} size.` : 'Zone resumed — shrinking continues.');
+  renderHexGrid();
+}
+
 function toggleTeamCollapse(ti, event) {
   event.stopPropagation();
   const aliveCount = participants.filter(p => p.teamIndex === ti && p.alive).length;
@@ -2613,6 +2632,9 @@ function resetGame() {
   document.getElementById('btn-start').style.display = 'none';
   document.getElementById('btn-next-round').style.display = 'none';
   document.getElementById('btn-npc-auto').style.display = 'none';
+  document.getElementById('btn-randomize').style.display = 'inline-block';
+  document.getElementById('btn-clear-grid').style.display = 'inline-block';
+  zonePaused = false; zoneFreezeRound = null;
   npcProcessedThisRound.clear();
   finalZoneCombatDone = false;
   document.getElementById('event-log-list').innerHTML = '';
@@ -3078,6 +3100,8 @@ function applyDMSave(data) {
   document.getElementById('phase-badge').classList.toggle('active', isRunning);
   document.getElementById('btn-next-round').style.display = isRunning ? 'inline-block' : 'none';
   document.getElementById('btn-npc-auto').style.display = isRunning ? 'inline-block' : 'none';
+  document.getElementById('btn-randomize').style.display = isRunning ? 'none' : 'inline-block';
+  document.getElementById('btn-clear-grid').style.display = isRunning ? 'none' : 'inline-block';
   npcProcessedThisRound.clear();
   document.getElementById('btn-start').style.display = 'none';
   clearAllLogFilters();
@@ -3391,6 +3415,9 @@ function returnToTitle() {
   document.getElementById('phase-badge').classList.remove('active');
   document.getElementById('btn-start').style.display = 'none';
   document.getElementById('btn-next-round').style.display = 'none';
+  document.getElementById('btn-randomize').style.display = 'inline-block';
+  document.getElementById('btn-clear-grid').style.display = 'inline-block';
+  zonePaused = false; zoneFreezeRound = null;
   document.getElementById('event-log-list').innerHTML = '';
   clearAllLogFilters();
   document.getElementById('char-picker-modal').classList.remove('active');
