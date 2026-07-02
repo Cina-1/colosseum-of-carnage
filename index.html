@@ -1215,6 +1215,10 @@ function playerMoveToken(pid, col, row) {
 function clearAllPlacements(silent=false) {
   participants.forEach(p=>{
     if (p.position) { removeFromCell(p.id,p.position.col,p.position.row); p.position=null; }
+    // Wipe pre-game placement history too — otherwise re-randomizing a few times
+    // before starting leaves every transient spawn attempt in visitedCells, not
+    // just the final one. Real history should only begin at Round 1.
+    p.visitedCells = [];
   });
   renderHexGrid();
   renderSidebar();
@@ -1246,6 +1250,9 @@ function randomizePlacements() {
 
   const allPerim = sortByAngle(getOuterRingCells());
   const spawnPoints = selectNonAdjacentPositions(allPerim, 48);
+  // The 48 slots are evenly spaced around the perimeter; grouping them into 6
+  // consecutive chunks of 8 maps directly onto the hexagon's 6 physical sides.
+  const sideOf = idx => Math.floor(idx / 8);
 
   // Identify which team slots (0–15) contain a corner cell
   const cornerSet = new Set(getCornerCells().map(({col,row})=>`${col},${row}`));
@@ -1256,38 +1263,61 @@ function randomizePlacements() {
         slotsWithCorners.add(i);
     });
   }
-
-  const safeSlots = shuffleArray(Array.from({length:16},(_,i)=>i).filter(i=>!slotsWithCorners.has(i)));
-  const cornerSlots = shuffleArray(Array.from({length:16},(_,i)=>i).filter(i=>slotsWithCorners.has(i)));
   const pinnedSet = new Set(TOP_ROSTER_INDICES);
-  const nonPinnedTeams = shuffleArray(Array.from({length:16},(_,i)=>i).filter(i=>!pinnedSet.has(i)));
 
-  // Assign slots: pinned teams get safe slots first
-  const assignment = {};
-  TOP_ROSTER_INDICES.forEach((ti, pi) => { assignment[ti] = safeSlots[pi]; });
-  const remainingSlots = shuffleArray([...safeSlots.slice(TOP_ROSTER_INDICES.length), ...cornerSlots]);
-  nonPinnedTeams.forEach((ti, i) => { assignment[ti] = remainingSlots[i]; });
+  // A team's own 3 members always land on 3 different sides — the i/i+16/i+32
+  // slot spacing guarantees that by construction, no extra check needed. What
+  // isn't guaranteed is a single PLAYER's characters (which may span two
+  // different teams, e.g. Philip's Faelwen + Ryuzen) avoiding the same side —
+  // so retry the shuffle until that holds too.
+  let plan = null, lastCandidate = null;
+  for (let attempt = 0; attempt < 300 && !plan; attempt++) {
+    const safeSlots = shuffleArray(Array.from({length:16},(_,i)=>i).filter(i=>!slotsWithCorners.has(i)));
+    const cornerSlots = shuffleArray(Array.from({length:16},(_,i)=>i).filter(i=>slotsWithCorners.has(i)));
+    const nonPinnedTeams = shuffleArray(Array.from({length:16},(_,i)=>i).filter(i=>!pinnedSet.has(i)));
+
+    const assignment = {};
+    TOP_ROSTER_INDICES.forEach((ti, pi) => { assignment[ti] = safeSlots[pi]; });
+    const remainingSlots = shuffleArray([...safeSlots.slice(TOP_ROSTER_INDICES.length), ...cornerSlots]);
+    nonPinnedTeams.forEach((ti, i) => { assignment[ti] = remainingSlots[i]; });
+
+    const candidate = {}; // pid -> {col, row, side}
+    for (let ti=0;ti<16;ti++) {
+      const slotIndex = assignment[ti];
+      if (slotIndex === undefined) continue;
+      const positions = [slotIndex, slotIndex+16, slotIndex+32]
+        .map(idx => spawnPoints[idx] ? {...spawnPoints[idx], side: sideOf(idx)} : null)
+        .filter(Boolean);
+      const memberOrder = shuffleArray([...teams[ti].memberIds]);
+      memberOrder.forEach((pid, mi) => { if (positions[mi]) candidate[pid] = positions[mi]; });
+    }
+    lastCandidate = candidate;
+
+    const violated = PLAYER_LOGINS.some(login => {
+      if (login.pids.length < 2) return false;
+      const sides = login.pids.map(pid => candidate[pid]?.side).filter(s => s != null);
+      return new Set(sides).size < sides.length;
+    });
+    if (!violated) plan = candidate;
+  }
+  if (!plan) {
+    console.warn('Could not fully satisfy same-player spawn spacing after 300 attempts — using the last generated layout.');
+    plan = lastCandidate;
+  }
 
   // Place participants and mark starting tiles
-  for (let ti=0;ti<16;ti++) {
-    const slotIndex = assignment[ti];
-    if (slotIndex === undefined) continue;
-    const positions = [spawnPoints[slotIndex], spawnPoints[slotIndex+16], spawnPoints[slotIndex+32]].filter(Boolean);
-    const memberOrder = shuffleArray([...teams[ti].memberIds]);
-    memberOrder.forEach((pid, mi) => {
-      if (!positions[mi]) return;
-      placeParticipant(pid, positions[mi].col, positions[mi].row);
-      // Mark starting tile — locked, cannot be rolled over
-      const p = getParticipant(pid);
-      const cs = cellStates[`${positions[mi].col},${positions[mi].row}`];
-      if (cs && !cs.events.some(e=>e.isStartingTile)) {
-        cs.events.push({round:0, category:'Starting Tile', catColor:'#b8922a',
-          text:`Starting position for ${p.name} (${teams[ti].name}).`,
-          isStartingTile:true, triggeredBy:[{pid, name:p.name, teamIndex:ti}]});
-        cs.state = 'starting';
-      }
-    });
-  }
+  Object.entries(plan).forEach(([pid, pos]) => {
+    placeParticipant(pid, pos.col, pos.row);
+    // Mark starting tile — locked, cannot be rolled over
+    const p = getParticipant(pid);
+    const cs = cellStates[`${pos.col},${pos.row}`];
+    if (cs && !cs.events.some(e=>e.isStartingTile)) {
+      cs.events.push({round:0, category:'Starting Tile', catColor:'#b8922a',
+        text:`Starting position for ${p.name} (${teams[p.teamIndex].name}).`,
+        isStartingTile:true, triggeredBy:[{pid, name:p.name, teamIndex:p.teamIndex}]});
+      cs.state = 'starting';
+    }
+  });
 
   renderHexGrid();
   renderSidebar();
@@ -2147,6 +2177,10 @@ function startGame() {
   addRoundBanner(0);
   participants.filter(p => p.alive && p.position).forEach(p => {
     const team = teams[p.teamIndex];
+    // Movement/visited history officially starts here, not whenever placement
+    // happened — stamp exactly one clean entry for the spawn tile regardless of
+    // how many times it was placed/re-randomized during setup.
+    p.visitedCells = [{col: p.position.col, row: p.position.row, round: 0}];
     addLog(`starting position (${p.position.col},${p.position.row})`, 'move', p.id,
       {col: p.position.col, row: p.position.row, nameHtml: `<b>${p.name}</b> — <b>${team.name}</b>`});
   });
