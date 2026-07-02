@@ -1080,12 +1080,17 @@ function removeFromCell(pid, col, row) {
   if (cs) cs.occupants = cs.occupants.filter(id=>id!==pid);
 }
 
-function moveParticipant(pid, col, row) {
+// forcedGroup, if given, overrides the automatic same-team grouping below and
+// moves exactly that set of pids together — used when dragging an entire mixed-
+// team stack at once (no specific character pre-selected via right-click).
+function moveParticipant(pid, col, row, forcedGroup) {
   const p = getParticipant(pid);
   if (!p || !p.alive) return;
 
   let toMove = [pid];
-  if (p.position) {
+  if (forcedGroup && forcedGroup.length > 0) {
+    toMove = [...new Set(forcedGroup)];
+  } else if (p.position) {
     const grouped = getTeammates(pid).filter(tp =>
       tp.alive && tp.position && tp.position.col===p.position.col && tp.position.row===p.position.row
     );
@@ -2771,10 +2776,27 @@ function initGridInteraction() {
       if (tgt && (tgt.col !== fromCol || tgt.row !== fromRow)) {
         const occ = [...cellStates[`${fromCol},${fromRow}`].occupants.filter(id=>getParticipant(id)?.alive)];
         const draggable = (logPidFilters && logPidFilters.size > 0) ? occ.filter(id=>logPidFilters.has(id)) : occ;
-        const mainPid = (selectedParticipant && draggable.includes(selectedParticipant)) ? selectedParticipant : draggable[0];
+        const hasSpecificSelection = selectedParticipant && draggable.includes(selectedParticipant);
+        const mainPid = hasSpecificSelection ? selectedParticipant : draggable[0];
         if (mainPid) {
-          if (appMode === 'player') playerMoveToken(mainPid, tgt.col, tgt.row);
-          else moveParticipant(mainPid, tgt.col, tgt.row);
+          if (appMode === 'player') {
+            playerMoveToken(mainPid, tgt.col, tgt.row);
+          } else if (hasSpecificSelection) {
+            // A specific character was pre-selected (e.g. via right-click "unstack")
+            // — move just them (+ same-team teammates), leaving the rest behind.
+            moveParticipant(mainPid, tgt.col, tgt.row);
+          } else {
+            // Nothing specifically selected — drag the whole stack together,
+            // regardless of team.
+            moveParticipant(mainPid, tgt.col, tgt.row, draggable);
+          }
+          if (hasSpecificSelection) {
+            // Selection doesn't stick past one drag — the next drag on any stack
+            // (including this one, if it's re-formed) defaults back to "move all".
+            selectedParticipant = null;
+            document.querySelectorAll('.member-row').forEach(el=>el.classList.remove('selected-member'));
+            updateSelectionRing();
+          }
         }
       }
     }
