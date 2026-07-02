@@ -570,7 +570,24 @@ function enterDmSetup() {
     if (entered === null) return;
     if (entered !== DM_PASSWORD) { alert('Incorrect password.'); return; }
   }
-  showSetupScreen('dm');
+
+  // Silently sign in and check for a game already in progress in the cloud —
+  // this is what lets progress survive between sessions without any extra DM
+  // steps, right up until Reset explicitly clears it.
+  if (typeof window.liveSyncSignInDM === 'function' && typeof window.liveSyncFetchOnce === 'function') {
+    window.liveSyncSignInDM()
+      .then(() => { liveSyncSignedIn = true; return window.liveSyncFetchOnce(); })
+      .then(data => {
+        if (data && confirm(`Resume the saved game (Round ${data.round || 0})? Cancel to start a fresh setup instead.`)) {
+          applyCloudDMState(data);
+        } else {
+          showSetupScreen('dm');
+        }
+      })
+      .catch(() => showSetupScreen('dm')); // live sync unavailable — fall back to normal setup
+  } else {
+    showSetupScreen('dm');
+  }
 }
 
 // ── PLAYER LOGINS (optional, soft gate only) ────────────────
@@ -2546,6 +2563,14 @@ function resetGame() {
   updateStats();
   setStatus('Game reset. Select a participant, then click a hex to place them.');
   document.getElementById('setup-overlay').classList.add('active');
+
+  // Reset is the one explicit action that actually clears persisted progress —
+  // wipe the cloud save too so a resumed session doesn't come back stale, and
+  // drop any live party groupings from the game that just ended.
+  liveSyncPartyGroups = [];
+  if (liveSyncSignedIn && typeof window.liveSyncClear === 'function') {
+    window.liveSyncClear().catch(err => console.warn('Cloud clear failed:', err.message));
+  }
 }
 
 // ── TOOLTIP ───────────────────────────────────────────────
@@ -2931,6 +2956,15 @@ function applyDMSave(data) {
   const list = document.getElementById('event-log-list');
   list.innerHTML = '';
   logEntries.forEach(e => renderLogEntry(e, false));
+}
+
+// DM: resume from the live-sync cloud document (same shape as a DM save, plus
+// party groupings) instead of a locally loaded file — used by enterDmSetup when
+// a game is already in progress from a prior session.
+function applyCloudDMState(data) {
+  liveSyncPartyGroups = data.parties || [];
+  applyDMSave(data);
+  setStatus(`Resumed from cloud — Round ${round}.`);
 }
 
 // ── EXPORT CHARACTERS ─────────────────────────────────────
@@ -3776,6 +3810,13 @@ function buildLiveStateData() {
 
 // DM: sign in (behind the DM password) and open the live sync / party grouping panel.
 function enterDmLiveSync() {
+  // Already signed in from entering DM mode — just open the panel.
+  if (liveSyncSignedIn) {
+    document.getElementById('live-sync-status').textContent = 'Signed in — ready to publish.';
+    renderPartyGroupsUI();
+    document.getElementById('live-sync-modal').classList.add('active');
+    return;
+  }
   if (DM_PASSWORD) {
     const entered = prompt('Enter the Dungeon Master password:');
     if (entered === null) return;
@@ -3949,7 +3990,7 @@ initGridInteraction();
   // Live Sync backend — Firebase Firestore + Anonymous Auth.
   // DM writes (behind the in-app DM password), players only ever read/subscribe.
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js";
-  import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js";
+  import { getFirestore, doc, setDoc, getDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js";
   import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-auth.js";
 
   const firebaseConfig = {
@@ -3976,6 +4017,19 @@ initGridInteraction();
   // DM: push the current game state up to Firestore.
   window.liveSyncPush = function (data) {
     return setDoc(gameDocRef, data);
+  };
+
+  // DM: read the current cloud state once (no subscription) — used on entering DM
+  // mode to offer resuming a prior session. Reads are open per the security rules,
+  // so this works even before signing in.
+  window.liveSyncFetchOnce = async function () {
+    const snap = await getDoc(gameDocRef);
+    return snap.exists() ? snap.data() : null;
+  };
+
+  // DM: wipe the cloud save (called on Reset) so a stale game can't be resumed later.
+  window.liveSyncClear = function () {
+    return deleteDoc(gameDocRef);
   };
 
   // Player: subscribe to live updates; each snapshot is handed to applyLiveGameState.
