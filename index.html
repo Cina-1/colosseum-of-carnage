@@ -234,7 +234,7 @@
 <div class="main-layout">
   <div class="sidebar">
     <div class="sidebar-tabs">
-      <button class="sidebar-tab active" onclick="showTab('roster')">Remaining Teams</button>
+      <button class="sidebar-tab active" onclick="showTab('roster')">Roster</button>
       <button class="sidebar-tab" onclick="showTab('log')">Event Log</button>
     </div>
     <div class="sidebar-content" id="tab-roster"></div>
@@ -997,30 +997,31 @@ function onHexClick(col, row, clientX, clientY) {
     return;
   }
 
+  // DM mode: clicking a hex only inspects it — movement is drag-only (a
+  // right-click selection still marks who a subsequent drag should move, but
+  // clicking a destination hex no longer moves anyone by itself). A plain click
+  // also cancels any pending right-click selection, so there's always a way to
+  // back out of a pick without having to actually drag it somewhere.
   if (selectedParticipant !== null) {
-    hideTooltip();
-    moveParticipant(selectedParticipant, col, row, selectedForcedGroup || undefined);
     selectedParticipant = null; selectedForcedGroup = null;
     document.querySelectorAll('.member-row').forEach(el=>el.classList.remove('selected-member'));
     setStatus('');
-    updateSelectionRing();
-  } else {
-    selectedCell = {col,row};
-    renderCellInfo(col,row);
-    updateSelectionRing();
-    // Pinned tooltip on occupied hex or the Final Zone
-    const occ = getFilteredOccs(col, row);
-    const isFinalZoneClick = col === CENTER_COL && row === CENTER_ROW;
-    if (occ.length > 0 || isFinalZoneClick) {
-      if (pinnedTooltip && tooltipHex?.col===col && tooltipHex?.row===row) {
-        hideTooltip();
-      } else {
-        pinnedTooltip = true;
-        showTooltipForHex(col, row, clientX, clientY);
-      }
-    } else {
+  }
+  selectedCell = {col,row};
+  renderCellInfo(col,row);
+  updateSelectionRing();
+  // Pinned tooltip on occupied hex or the Final Zone
+  const occ = getFilteredOccs(col, row);
+  const isFinalZoneClick = col === CENTER_COL && row === CENTER_ROW;
+  if (occ.length > 0 || isFinalZoneClick) {
+    if (pinnedTooltip && tooltipHex?.col===col && tooltipHex?.row===row) {
       hideTooltip();
+    } else {
+      pinnedTooltip = true;
+      showTooltipForHex(col, row, clientX, clientY);
     }
+  } else {
+    hideTooltip();
   }
 }
 
@@ -1736,8 +1737,16 @@ function renderSidebar() {
   const activeTeamSet = activePids
     ? new Set([...activePids].map(pid=>getParticipant(pid)?.teamIndex).filter(ti=>ti!=null))
     : null;
-  // Pinned teams first, then the rest
-  const order = [...TOP_ROSTER_INDICES, ...teams.map((_,i)=>i).filter(i=>!TOP_ROSTER_INDICES.includes(i))];
+  // Pinned teams first (regardless of elimination), then the rest sorted alive
+  // teams before fully-eliminated ones, so eliminated teams sink to the bottom
+  // instead of needing to scroll past them.
+  const aliveCountOf = ti => participants.filter(p=>p.teamIndex===ti&&p.alive).length;
+  const restIndices = teams.map((_,i)=>i).filter(i=>!TOP_ROSTER_INDICES.includes(i));
+  const order = [
+    ...TOP_ROSTER_INDICES,
+    ...restIndices.filter(ti=>aliveCountOf(ti)>0),
+    ...restIndices.filter(ti=>aliveCountOf(ti)===0),
+  ];
   order.forEach(ti=>{
     if (activeTeamSet && !activeTeamSet.has(ti)) return;
     const team=teams[ti];
@@ -1791,11 +1800,12 @@ function renderSidebar() {
           <button class="elim-btn" onclick="toggleEliminate('${pid}',event)">${p.alive?'✕':'↺'}</button>`;
       }
       if (p.alive) {
+        // Click just focuses the camera on them — movement is drag-only now
+        // (drag this row directly onto the board; see initRosterDragToBoard).
         row.addEventListener('click',e=>{
           if (e.target.classList.contains('elim-btn')) return;
           if (e.target.classList.contains('hp-adj-btn')) return;
           if (e.target.classList.contains('rest-btn')) return;
-          selectParticipant(pid);
           if (p.position) scrollToCell(p.position.col,p.position.row, true);
         });
       }
@@ -4248,8 +4258,68 @@ function selectPlayerLogin(login) {
   livePollInterval = setInterval(refreshLiveView, 20000);
 }
 
+// Drag a roster row (sidebar) directly onto the hex grid to move that
+// character — the DM-mode counterpart to removing click-to-place. Uses pointer
+// capture on the roster container so the drag tracks correctly even once the
+// cursor leaves the sidebar and moves over the grid.
+function initRosterDragToBoard() {
+  const rosterContainer = document.getElementById('tab-roster');
+  let dragPid = null, dragGhost = null, dragStartX = 0, dragStartY = 0, dragMoved = false;
+
+  rosterContainer.addEventListener('pointerdown', e => {
+    if (appMode === 'player') return;
+    if (e.target.closest('.elim-btn,.hp-adj-btn,.rest-btn')) return;
+    const row = e.target.closest('.member-row');
+    if (!row || !row.dataset.pid) return;
+    const p = getParticipant(row.dataset.pid);
+    if (!p || !p.alive) return;
+    dragPid = row.dataset.pid; dragStartX = e.clientX; dragStartY = e.clientY; dragMoved = false;
+    rosterContainer.setPointerCapture(e.pointerId);
+  });
+
+  rosterContainer.addEventListener('pointermove', e => {
+    if (!dragPid) return;
+    const dx = e.clientX - dragStartX, dy = e.clientY - dragStartY;
+    if (!dragMoved && Math.hypot(dx, dy) > 8) dragMoved = true;
+    if (!dragMoved) return;
+    if (!dragGhost) {
+      const p = getParticipant(dragPid);
+      const tc = teams[p.teamIndex].color;
+      dragGhost = document.createElement('div');
+      dragGhost.style.cssText = `position:fixed;pointer-events:none;z-index:999;
+        width:30px;height:30px;border-radius:50%;background:${tc};opacity:0.88;
+        border:2px solid #d4a832;display:flex;align-items:center;justify-content:center;
+        font-family:'Share Tech Mono',monospace;font-size:8px;color:white;font-weight:bold;
+        box-shadow:0 4px 20px rgba(0,0,0,0.8),0 0 10px ${tc}66;
+        transform:translate(-50%,-50%);transition:box-shadow 0.1s;`;
+      dragGhost.textContent = p.name.split(/[\s-]/)[0][0].toUpperCase();
+      document.body.appendChild(dragGhost);
+    }
+    dragGhost.style.left = e.clientX + 'px';
+    dragGhost.style.top = e.clientY + 'px';
+  });
+
+  rosterContainer.addEventListener('pointerup', e => {
+    if (!dragPid) return;
+    rosterContainer.releasePointerCapture(e.pointerId);
+    if (dragGhost) { dragGhost.remove(); dragGhost = null; }
+    if (dragMoved) {
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      const tgt = hexFromElement(el);
+      if (tgt) moveParticipant(dragPid, tgt.col, tgt.row);
+    }
+    dragPid = null; dragMoved = false;
+  });
+
+  rosterContainer.addEventListener('pointercancel', () => {
+    if (dragGhost) { dragGhost.remove(); dragGhost = null; }
+    dragPid = null; dragMoved = false;
+  });
+}
+
 init();
 initGridInteraction();
+initRosterDragToBoard();
 </script>
 
 <script type="module">
