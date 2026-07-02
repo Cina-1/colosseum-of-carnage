@@ -1591,7 +1591,7 @@ function renderHexGrid() {
 
         const hasUserEvents = cs.events.some(e=>!e.isStartingTile);
         if (hasUserEvents) {
-          const pipColor = cs.events.some(e=>e.crossedPaths) ? '#e67e22' : '#4acf8a';
+          const pipColor = hasRelevantCrossedPaths(cs) ? '#e67e22' : '#4acf8a';
           const pip=document.createElementNS('http://www.w3.org/2000/svg','circle');
           pip.setAttribute('cx',x+HEX_SIZE*0.55); pip.setAttribute('cy',y-HEX_SIZE*0.65);
           pip.setAttribute('r','2.5'); pip.setAttribute('fill',pipColor); pip.setAttribute('fill-opacity','0.85');
@@ -1601,7 +1601,7 @@ function renderHexGrid() {
       } else if (cs.events.length>0 && !isCenterCell) {
         const g2=document.createElementNS('http://www.w3.org/2000/svg','g');
         g2.classList.add('hex-overlay'); g2.style.pointerEvents='none';
-        const pipColor = cs.events.some(e=>e.crossedPaths) ? '#e67e22' : '#4acf8a';
+        const pipColor = hasRelevantCrossedPaths(cs) ? '#e67e22' : '#4acf8a';
         const pip=document.createElementNS('http://www.w3.org/2000/svg','circle');
         pip.setAttribute('cx',x+HEX_SIZE*0.5); pip.setAttribute('cy',y-HEX_SIZE*0.5);
         pip.setAttribute('r','2.5'); pip.setAttribute('fill',pipColor);
@@ -1858,7 +1858,10 @@ function renderCellInfo(col,row) {
     return;
   }
 
-  const occ=cs.occupants.filter(id=>getParticipant(id)?.alive)
+  // Same fog-of-war rule as the token overlay: only reveal occupants when an
+  // isolated/filtered pid is actually standing here right now — visiting a tile
+  // in the past doesn't grant ongoing visibility into who's currently on it.
+  const occ=getFilteredOccs(col,row)
     .sort((a,b)=>(PLAYER_TEAM_INDICES.includes(getParticipant(a).teamIndex)?0:1)-(PLAYER_TEAM_INDICES.includes(getParticipant(b).teamIndex)?0:1));
   const isFinalZone = col === CENTER_COL && row === CENTER_ROW;
   let html = isFinalZone
@@ -2636,6 +2639,14 @@ function getFilteredOccs(col, row) {
     return filt.length > 0 ? [...filt, ...allAlive.filter(id=>!logPidFilters.has(id))] : filt;
   }
   return allAlive;
+}
+
+// A crossed-paths event should only flag as "relevant" (and turn a hex's pip
+// orange) when the isolated/filtered viewer's own pids were actually part of
+// that crossing — otherwise it leaks that unrelated characters met here.
+function hasRelevantCrossedPaths(cs) {
+  const relevantPids = isolatedPids || (logPidFilters && logPidFilters.size > 0 ? logPidFilters : null);
+  return cs.events.some(e => e.crossedPaths && (!relevantPids || e.triggeredBy?.some(t => relevantPids.has(t.pid))));
 }
 
 function showTooltipForHex(col, row, clientX, clientY) {
