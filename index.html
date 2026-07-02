@@ -16,7 +16,9 @@
     --red-elim:#8b1a1a;
   }
   *{box-sizing:border-box;margin:0;padding:0;}
-  body{background:var(--bg);color:var(--text);font-family:'Crimson Text',serif;height:100vh;display:flex;flex-direction:column;overflow:hidden;}
+  body{background:var(--bg);color:var(--text);font-family:'Crimson Text',serif;height:100vh;display:flex;flex-direction:column;overflow:hidden;user-select:none;-webkit-user-select:none;}
+  /* Cell event text is the one thing worth letting players/DM select and copy — right-click on it uses the browser's native copy, no custom menu needed. */
+  .event-text, .evt-detail{user-select:text;-webkit-user-select:text;}
   header{background:var(--surface);border-bottom:1px solid var(--gold);padding:8px 20px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;box-shadow:0 2px 20px rgba(184,146,42,0.15);}
   header h1{font-family:'Cinzel',serif;font-size:1.3rem;color:var(--gold-bright);letter-spacing:3px;text-transform:uppercase;}
   .header-stats{display:flex;gap:24px;font-family:'Cinzel',serif;font-size:0.7rem;letter-spacing:1px;color:var(--text-dim);}
