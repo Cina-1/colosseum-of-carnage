@@ -435,6 +435,18 @@
   </div>
 </div>
 
+<!-- Live event popup (Player): a table-roll event that landed on this character's or a groupmate's tile the round the DM just synced -->
+<div class="modal-overlay" id="live-event-popup-modal">
+  <div class="modal" style="min-width:320px;">
+    <h2>⚄ Event Triggered</h2>
+    <p id="live-event-popup-who" style="margin-bottom:8px;color:var(--text-dim);"></p>
+    <div class="event-result" id="live-event-popup-body"></div>
+    <div class="modal-buttons">
+      <button class="btn btn-gold" onclick="dismissLiveEventPopup()">Got it</button>
+    </div>
+  </div>
+</div>
+
 <!-- Log character filter picker -->
 <div class="modal-overlay" id="log-char-picker-modal" onclick="if(event.target===this)this.classList.remove('active')">
   <div class="modal" style="min-width:320px;max-height:80vh;display:flex;flex-direction:column;">
@@ -3973,6 +3985,8 @@ let liveSyncGroups = {};
 let liveSyncGroupCounter = 0;
 let liveSyncSignedIn = false;
 let lastLivePids = null, lastLiveName = null; // player: remembered for the Refresh button
+let lastSeenPopupRound = null; // player: last round already shown as an event popup
+let liveEventPopupQueue = [];  // player: queued table-roll events awaiting display
 let livePollInterval = null; // player: background fallback poll, independent of onSnapshot
 
 function buildLiveStateData() {
@@ -4226,6 +4240,34 @@ function applyLiveGameState(data, myPids, myName) {
     clearAllLogFilters();
     selectedParticipant = null; selectedForcedGroup = null; selectedCell = null;
 
+    // Surface any table-roll events (Hazard/Fortune/Omen) that landed on this
+    // player's own or a groupmate's tile during the round that just concluded —
+    // that's what lets the DM record a whole round, sync it, and have each
+    // party's triggered event pop up on their own screen to go resolve live.
+    if (lastSeenPopupRound !== null && round > lastSeenPopupRound) {
+      const justEndedRound = round - 1;
+      const seenKeys = new Set();
+      const newEvents = [];
+      effectivePids.forEach(pid => {
+        const p = getParticipant(pid);
+        if (!p || !p.position) return;
+        const posKey = `${p.position.col},${p.position.row}`;
+        const cs = cellStates[posKey];
+        if (!cs) return;
+        cs.events.forEach(ev => {
+          if (ev.round !== justEndedRound) return;
+          if (!ROLL_CATEGORIES.some(rc => rc.name === ev.category)) return;
+          if (!ev.triggeredBy?.some(t => t.pid === pid)) return;
+          const dedupeKey = `${posKey}|${ev.round}|${ev.category}|${ev.text}`;
+          if (seenKeys.has(dedupeKey)) return;
+          seenKeys.add(dedupeKey);
+          newEvents.push({...ev, forName: p.name});
+        });
+      });
+      if (newEvents.length) queueEventPopups(newEvents);
+    }
+    lastSeenPopupRound = round;
+
     renderLog();
     renderHexGrid(); renderSidebar(); updateStats();
     setStatus(`Live view — ${myName} — Round ${round} — updated ${new Date().toLocaleTimeString()}.`);
@@ -4246,6 +4288,32 @@ function refreshLiveView() {
   }).catch(err => alert('Refresh failed: ' + err.message));
 }
 window.applyLiveGameState = applyLiveGameState;
+
+// Player: queue table-roll events triggered this round and show them one at a
+// time (a "Got it" advances to the next if more than one landed simultaneously).
+function queueEventPopups(events) {
+  liveEventPopupQueue.push(...events);
+  showNextEventPopup();
+}
+
+function showNextEventPopup() {
+  if (!liveEventPopupQueue.length) {
+    document.getElementById('live-event-popup-modal').classList.remove('active');
+    return;
+  }
+  const ev = liveEventPopupQueue[0];
+  document.getElementById('live-event-popup-who').textContent =
+    `${ev.forName} — Round ${ev.round}${liveEventPopupQueue.length > 1 ? ` (1 of ${liveEventPopupQueue.length})` : ''}`;
+  const body = document.getElementById('live-event-popup-body');
+  body.innerHTML = renderEventResultHtml(ev.text, ev.category, ev.catColor, ev.round);
+  body.style.borderLeftColor = ev.catColor;
+  document.getElementById('live-event-popup-modal').classList.add('active');
+}
+
+function dismissLiveEventPopup() {
+  liveEventPopupQueue.shift();
+  showNextEventPopup();
+}
 
 // Player: "who are you" picker for live view — one row per player login (which
 // may cover 1 or 2 characters), gated by that login's password.
@@ -4277,6 +4345,10 @@ function selectPlayerLogin(login) {
     alert('Live sync is not loaded yet — check your connection and try again in a moment.');
     return;
   }
+  // Fresh login — don't dump a backlog of past-round events as popups, and
+  // don't carry over any queued popups from a previous character.
+  lastSeenPopupRound = null;
+  liveEventPopupQueue = [];
   window.liveSyncSubscribe(login.pids, login.name);
 
   // Background fallback: some browsers (ad-blockers, privacy extensions) block
