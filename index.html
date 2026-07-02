@@ -3802,6 +3802,7 @@ let liveSyncGroups = {};
 let liveSyncGroupCounter = 0;
 let liveSyncSignedIn = false;
 let lastLivePids = null, lastLiveName = null; // player: remembered for the Refresh button
+let livePollInterval = null; // player: background fallback poll, independent of onSnapshot
 
 function buildLiveStateData() {
   return {
@@ -4106,6 +4107,13 @@ function selectPlayerLogin(login) {
     return;
   }
   window.liveSyncSubscribe(login.pids, login.name);
+
+  // Background fallback: some browsers (ad-blockers, privacy extensions) block
+  // Firestore's realtime push channel specifically while still allowing normal
+  // one-time reads. Polling every 20s means the view self-heals even if the live
+  // push never arrives, without the player having to notice and click Refresh.
+  if (livePollInterval) clearInterval(livePollInterval);
+  livePollInterval = setInterval(refreshLiveView, 20000);
 }
 
 init();
