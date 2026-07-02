@@ -272,6 +272,7 @@
         <button class="btn dm-only" onclick="enterDmLiveSync()" title="Publish live game state for players to watch">🌐 Live Sync</button>
         <button class="btn btn-danger dm-only" onclick="confirmReset()">↺ Reset</button>
         <button class="btn" id="btn-back-to-title" style="display:none;" onclick="returnToTitle()">← Title</button>
+        <button class="btn" id="btn-live-refresh" style="display:none;" onclick="refreshLiveView()" title="Manually re-fetch the latest game state">🔄 Refresh</button>
         <button class="btn" id="btn-zones" onclick="toggleZones()" title="Toggle zone ring visibility">⬡ Zones</button>
         <div style="display:flex;align-items:center;gap:4px;margin-left:auto;">
           <button class="btn" onclick="adjustZoom(-0.15)" title="Zoom Out">−</button>
@@ -3793,6 +3794,7 @@ function exportFinalZonePlayers() {
 // merged view while traveling together; ungrouping reverts each PC to solo.
 let liveSyncPartyGroups = [];   // array of pid arrays, e.g. [["13_0","14_0"]]
 let liveSyncSignedIn = false;
+let lastLivePids = null, lastLiveName = null; // player: remembered for the Refresh button
 
 function buildLiveStateData() {
   return {
@@ -3903,49 +3905,68 @@ function autoPublishLiveUpdate() {
 // pids with — reusing the same isolation/fog-of-war rendering the DM's own
 // spotlight view already relies on.
 function applyLiveGameState(data, myPids, myName) {
-  round = data.round || 0;
-  gamePhase = data.gamePhase || 'setup';
-  logTick = data.logTick || 0;
+  try {
+    lastLivePids = myPids; lastLiveName = myName;
+    document.getElementById('btn-live-refresh').style.display = 'inline-block';
 
-  (data.participants || []).forEach(saved => {
-    const p = getParticipant(saved.id);
-    if (!p) return;
-    p.alive = saved.alive;
-    p.position = saved.position;
-    p.visitedCells = saved.visitedCells || [];
-    if (p.hp != null && saved.hp != null) p.hp = saved.hp;
-  });
+    round = data.round || 0;
+    gamePhase = data.gamePhase || 'setup';
+    logTick = data.logTick || 0;
 
-  initCellStates();
-  Object.entries(data.cellStates || {}).forEach(([key, cs]) => {
-    if (!cellStates[key]) return;
-    const events = (cs.events||[]).filter(e => !e.isDeath);
-    const migratedCas = (cs.events||[]).filter(e => e.isDeath);
-    const casualties = [...migratedCas, ...(cs.casualties||[])];
-    cellStates[key] = {state:cs.state, events, occupants:cs.occupants||[], ...(casualties.length ? {casualties} : {})};
-  });
+    (data.participants || []).forEach(saved => {
+      const p = getParticipant(saved.id);
+      if (!p) return;
+      p.alive = saved.alive;
+      p.position = saved.position;
+      p.visitedCells = saved.visitedCells || [];
+      if (p.hp != null && saved.hp != null) p.hp = saved.hp;
+    });
 
-  logEntries = data.logEntries ? [...data.logEntries] : [];
-  logTypeFilter = 'all'; logPidFilters = null;
+    initCellStates();
+    Object.entries(data.cellStates || {}).forEach(([key, cs]) => {
+      if (!cellStates[key]) return;
+      const events = (cs.events||[]).filter(e => !e.isDeath);
+      const migratedCas = (cs.events||[]).filter(e => e.isDeath);
+      const casualties = [...migratedCas, ...(cs.casualties||[])];
+      cellStates[key] = {state:cs.state, events, occupants:cs.occupants||[], ...(casualties.length ? {casualties} : {})};
+    });
 
-  const groups = data.parties || [];
-  const extraFromGroups = groups
-    .filter(g => g.some(pid => myPids.includes(pid)))
-    .flat();
-  const effectivePids = [...new Set([...myPids, ...extraFromGroups])];
+    logEntries = data.logEntries ? [...data.logEntries] : [];
+    logTypeFilter = 'all'; logPidFilters = null;
 
-  setAppMode('player');
-  setIsolation(effectivePids);
-  document.getElementById('phase-badge').textContent = gamePhase === 'running' ? `Round ${round}` : 'Setup Phase';
-  document.getElementById('player-view-badge').textContent =
-    `${myName}${effectivePids.length > myPids.length ? ` + party (${effectivePids.length})` : ''} · Round ${round}`;
-  document.getElementById('setup-overlay').classList.remove('active');
-  clearAllLogFilters();
-  selectedParticipant = null; selectedCell = null;
+    const groups = data.parties || [];
+    const extraFromGroups = groups
+      .filter(g => Array.isArray(g) && g.some(pid => myPids.includes(pid)))
+      .flat();
+    const effectivePids = [...new Set([...myPids, ...extraFromGroups])];
 
-  renderLog();
-  renderHexGrid(); renderSidebar(); updateStats();
-  setStatus(`Live view — ${myName} — Round ${round}.`);
+    setAppMode('player');
+    setIsolation(effectivePids);
+    document.getElementById('phase-badge').textContent = gamePhase === 'running' ? `Round ${round}` : 'Setup Phase';
+    document.getElementById('player-view-badge').textContent =
+      `${myName}${effectivePids.length > myPids.length ? ` + party (${effectivePids.length})` : ''} · Round ${round}`;
+    document.getElementById('setup-overlay').classList.remove('active');
+    clearAllLogFilters();
+    selectedParticipant = null; selectedCell = null;
+
+    renderLog();
+    renderHexGrid(); renderSidebar(); updateStats();
+    setStatus(`Live view — ${myName} — Round ${round} — updated ${new Date().toLocaleTimeString()}.`);
+  } catch (err) {
+    console.error('applyLiveGameState failed:', err);
+    setStatus(`Live view update failed — check console (F12) for details: ${err.message}`);
+  }
+}
+
+// Player: manually re-fetch the latest state without waiting for the live
+// subscription to fire — a fallback in case the push notification is delayed
+// or missed, so you don't have to fully re-select your character.
+function refreshLiveView() {
+  if (!lastLivePids || typeof window.liveSyncFetchOnce !== 'function') return;
+  window.liveSyncFetchOnce().then(data => {
+    if (!data) { alert('No live game published yet.'); return; }
+    applyLiveGameState(data, lastLivePids, lastLiveName);
+  }).catch(err => alert('Refresh failed: ' + err.message));
 }
 window.applyLiveGameState = applyLiveGameState;
 
