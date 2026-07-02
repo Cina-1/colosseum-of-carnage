@@ -358,6 +358,15 @@
         <button class="btn" onclick="setUiScale('xl')">Extra Large</button>
       </div>
     </div>
+    <div class="settings-row">
+      <div class="settings-label">Auto-Backup</div>
+      <div class="settings-options" style="align-items:center;gap:8px;">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:.68rem;color:var(--text);">
+          <input type="checkbox" id="auto-backup-toggle" onchange="autoBackupEnabled=this.checked" style="width:14px;height:14px;cursor:pointer;">
+          Download a save file automatically after every Next Round
+        </label>
+      </div>
+    </div>
     <div class="modal-buttons" style="margin-top:8px;">
       <button class="btn btn-gold" onclick="document.getElementById('settings-modal').classList.remove('active')">Close</button>
     </div>
@@ -435,6 +444,19 @@
   </div>
 </div>
 
+<!-- Generic in-page password prompt — replaces browser prompt() everywhere -->
+<div class="modal-overlay" id="password-modal">
+  <div class="modal" style="min-width:300px;">
+    <h2 id="password-modal-title">Enter Password</h2>
+    <input type="password" id="password-modal-input" autocomplete="off"
+      style="width:100%;box-sizing:border-box;padding:8px 10px;margin:4px 0 12px;background:var(--surface2);border:1px solid var(--border-bright);border-radius:2px;color:var(--text);font-size:.8rem;font-family:inherit;">
+    <div class="modal-buttons">
+      <button class="btn" onclick="resolvePasswordModal(null)">Cancel</button>
+      <button class="btn btn-gold" onclick="submitPasswordModal()">Submit</button>
+    </div>
+  </div>
+</div>
+
 <!-- Live event popup (Player): a table-roll event that landed on this character's or a groupmate's tile the round the DM just synced -->
 <div class="modal-overlay" id="live-event-popup-modal">
   <div class="modal" style="min-width:320px;">
@@ -496,6 +518,16 @@
       </div>
       <div style="margin-top:12px;text-align:left;">
         <button class="btn" style="font-size:.52rem;padding:3px 8px;" onclick="showSetupScreen('root')">← Back</button>
+      </div>
+    </div>
+
+    <!-- Screen 1b: Resume prompt — shown when a cloud save is found on DM entry -->
+    <div class="setup-screen" id="setup-screen-resume">
+      <h2>☁ Game In Progress</h2>
+      <p id="setup-resume-text">A saved game was found.</p>
+      <div class="setup-buttons" style="margin-top:14px;">
+        <button class="btn btn-gold" onclick="confirmResumeFromCloud()">▶ Resume Game</button>
+        <button class="btn" onclick="declineResumeFromCloud()">Start New Game</button>
       </div>
     </div>
 
@@ -577,9 +609,38 @@ const TEAMS_DATA = [
 // in plain sight). Leave blank to disable the prompt and let anyone into DM mode.
 const DM_PASSWORD = "carnage-dm";
 
-function enterDmSetup() {
+// In-page password prompt — a themed modal standing in for the browser's native
+// prompt() everywhere a password is needed (DM entry, player logins). Returns a
+// Promise resolving to the entered string, or null if cancelled.
+let passwordModalResolve = null;
+function askPassword(title) {
+  return new Promise(resolve => {
+    passwordModalResolve = resolve;
+    document.getElementById('password-modal-title').textContent = title;
+    const input = document.getElementById('password-modal-input');
+    input.value = '';
+    document.getElementById('password-modal').classList.add('active');
+    setTimeout(() => input.focus(), 50);
+  });
+}
+function submitPasswordModal() {
+  resolvePasswordModal(document.getElementById('password-modal-input').value);
+}
+function resolvePasswordModal(val) {
+  document.getElementById('password-modal').classList.remove('active');
+  if (passwordModalResolve) { passwordModalResolve(val); passwordModalResolve = null; }
+}
+// Enter submits, matching native prompt() behavior
+document.addEventListener('DOMContentLoaded', () => {
+  const input = document.getElementById('password-modal-input');
+  if (input) input.addEventListener('keydown', e => { if (e.key === 'Enter') submitPasswordModal(); });
+});
+
+let pendingResumeData = null; // cloud save fetched on DM entry, awaiting Resume/Start New choice
+
+async function enterDmSetup() {
   if (DM_PASSWORD) {
-    const entered = prompt('Enter the Dungeon Master password:');
+    const entered = await askPassword('Enter the Dungeon Master password:');
     if (entered === null) return;
     if (entered !== DM_PASSWORD) { alert('Incorrect password.'); return; }
   }
@@ -588,19 +649,34 @@ function enterDmSetup() {
   // this is what lets progress survive between sessions without any extra DM
   // steps, right up until Reset explicitly clears it.
   if (typeof window.liveSyncSignInDM === 'function' && typeof window.liveSyncFetchOnce === 'function') {
-    window.liveSyncSignInDM()
-      .then(() => { liveSyncSignedIn = true; return window.liveSyncFetchOnce(); })
-      .then(data => {
-        if (data && confirm(`Resume the saved game (Round ${data.round || 0})? Cancel to start a fresh setup instead.`)) {
-          applyCloudDMState(data);
-        } else {
-          showSetupScreen('dm');
-        }
-      })
-      .catch(() => showSetupScreen('dm')); // live sync unavailable — fall back to normal setup
+    try {
+      await window.liveSyncSignInDM();
+      liveSyncSignedIn = true;
+      const data = await window.liveSyncFetchOnce();
+      if (data) {
+        pendingResumeData = data;
+        document.getElementById('setup-resume-text').textContent =
+          `A saved game was found — Round ${data.round || 0}, ${data.gamePhase === 'running' ? 'in progress' : 'setup phase'}.`;
+        showSetupScreen('resume');
+      } else {
+        showSetupScreen('dm');
+      }
+    } catch {
+      showSetupScreen('dm'); // live sync unavailable — fall back to normal setup
+    }
   } else {
     showSetupScreen('dm');
   }
+}
+
+function confirmResumeFromCloud() {
+  if (pendingResumeData) applyCloudDMState(pendingResumeData);
+  pendingResumeData = null;
+}
+
+function declineResumeFromCloud() {
+  pendingResumeData = null;
+  showSetupScreen('dm');
 }
 
 // ── PLAYER LOGINS (optional, soft gate only) ────────────────
@@ -627,11 +703,11 @@ function findPlayerLoginForPid(pid) {
 
 // Prompts for a player login's password if one is configured above. Returns true
 // if unlocked (no password set, or correct password entered), false otherwise.
-function verifyCharacterPassword(pid, name) {
+async function verifyCharacterPassword(pid, name) {
   const login = findPlayerLoginForPid(pid);
   const pw = login?.password;
   if (!pw) return true;
-  const entered = prompt(`Enter the password for ${name}:`);
+  const entered = await askPassword(`Enter the password for ${name}:`);
   if (entered === null) return false;
   if (entered !== pw) { alert('Incorrect password.'); return false; }
   return true;
@@ -2252,13 +2328,14 @@ function nextRound() {
   setStatus(`Round ${round}. Select a participant to move them.`);
   renderHexGrid();
   autoPublishLiveUpdate();
+  autoDownloadBackup();
 }
 
 function showSetupScreen(which) {
-  ['setup-screen-1','setup-screen-dm','setup-screen-player'].forEach(id => {
+  ['setup-screen-1','setup-screen-dm','setup-screen-player','setup-screen-resume'].forEach(id => {
     document.getElementById(id).classList.remove('active');
   });
-  const map = {root:'setup-screen-1', dm:'setup-screen-dm', player:'setup-screen-player'};
+  const map = {root:'setup-screen-1', dm:'setup-screen-dm', player:'setup-screen-player', resume:'setup-screen-resume'};
   if (map[which]) document.getElementById(map[which]).classList.add('active');
 }
 
@@ -3049,8 +3126,8 @@ function clearIsolation() {
 }
 
 // ── SAVE / LOAD (DM) ──────────────────────────────────────
-function saveGameDM() {
-  const data = {
+function buildDMSaveData() {
+  return {
     type: 'dm-save', version: 1,
     savedAt: new Date().toISOString(),
     round, gamePhase, logTick,
@@ -3060,8 +3137,21 @@ function saveGameDM() {
       Object.entries(cellStates).map(([k,v]) => [k, {state:v.state, events:[...v.events], occupants:[...v.occupants], casualties:[...(v.casualties||[])]}])
     )
   };
-  downloadJSON(data, `arena-dm-save-round${round}.json`);
+}
+
+function saveGameDM() {
+  downloadJSON(buildDMSaveData(), `arena-dm-save-round${round}.json`);
   addLog('Game saved.', 'system', null);
+}
+
+// Optional (Settings -> Auto-Backup): silently downloads a save file after
+// every Next Round, so there's a local recovery point even if live sync/cloud
+// state is unavailable. Off by default so it doesn't clutter Downloads during
+// testing/troubleshooting sessions.
+let autoBackupEnabled = false;
+function autoDownloadBackup() {
+  if (!autoBackupEnabled) return;
+  downloadJSON(buildDMSaveData(), `arena-dm-autosave-round${round}.json`);
 }
 
 function handleLoadDM(event) {
@@ -3289,16 +3379,16 @@ function handleLoadPlayer(event) {
   const file = event.target.files[0];
   if (!file) return;
   const reader = new FileReader();
-  reader.onload = e => {
+  reader.onload = async e => {
     try {
       const data = JSON.parse(e.target.result);
       if (data.type === 'character-progress') {
-        if (verifyCharacterPassword(data.character.pid, data.character.name)) applyPlayerProgress(data);
+        if (await verifyCharacterPassword(data.character.pid, data.character.name)) applyPlayerProgress(data);
       } else if (data.type === 'character-progress-multi') {
         if (data.characters.length === 1) {
           // Only one character — load directly without picker
           const ch = data.characters[0].character;
-          if (verifyCharacterPassword(ch.pid, ch.name)) applyPlayerProgress({...data, ...data.characters[0]});
+          if (await verifyCharacterPassword(ch.pid, ch.name)) applyPlayerProgress({...data, ...data.characters[0]});
         } else {
           showCharacterPicker(data);
         }
@@ -3332,13 +3422,13 @@ function showCharacterPicker(multiData) {
   });
 
   // Attach load button handler
-  document.getElementById('char-picker-load-btn').onclick = () => {
+  document.getElementById('char-picker-load-btn').onclick = async () => {
     const checks = list.querySelectorAll('input[type=checkbox]');
     const selected = multiData.characters.filter((_, i) => checks[i] && checks[i].checked);
     if (selected.length === 0) { alert('Select at least one character.'); return; }
     if (selected.length === 1) {
       const ch = selected[0].character;
-      if (!verifyCharacterPassword(ch.pid, ch.name)) return;
+      if (!(await verifyCharacterPassword(ch.pid, ch.name))) return;
       document.getElementById('char-picker-modal').classList.remove('active');
       applyPlayerProgress({...multiData, ...selected[0]});
     } else {
@@ -4004,7 +4094,7 @@ function buildLiveStateData() {
 }
 
 // DM: sign in (behind the DM password) and open the live sync / party grouping panel.
-function enterDmLiveSync() {
+async function enterDmLiveSync() {
   // Already signed in from entering DM mode — just open the panel.
   if (liveSyncSignedIn) {
     document.getElementById('live-sync-status').textContent = 'Signed in — ready to publish.';
@@ -4013,7 +4103,7 @@ function enterDmLiveSync() {
     return;
   }
   if (DM_PASSWORD) {
-    const entered = prompt('Enter the Dungeon Master password:');
+    const entered = await askPassword('Enter the Dungeon Master password:');
     if (entered === null) return;
     if (entered !== DM_PASSWORD) { alert('Incorrect password.'); return; }
   }
@@ -4338,8 +4428,8 @@ function openLiveViewPicker() {
   document.getElementById('live-view-picker-modal').classList.add('active');
 }
 
-function selectPlayerLogin(login) {
-  if (!verifyCharacterPassword(login.pids[0], login.name)) return;
+async function selectPlayerLogin(login) {
+  if (!(await verifyCharacterPassword(login.pids[0], login.name))) return;
   document.getElementById('live-view-picker-modal').classList.remove('active');
   if (typeof window.liveSyncSubscribe !== 'function') {
     alert('Live sync is not loaded yet — check your connection and try again in a moment.');
