@@ -560,9 +560,9 @@ const TEAMS_DATA = [
 
 // ── DM PASSWORD (optional, soft gate only) ─────────────────
 // Same caveat as below: not real security, just stops a player from wandering
-// into the Dungeon Master screen (where the character passwords below are sitting
+// into the Dungeon Master screen (where the player logins below are sitting
 // in plain sight). Leave blank to disable the prompt and let anyone into DM mode.
-const DM_PASSWORD = "";
+const DM_PASSWORD = "carnage-dm";
 
 function enterDmSetup() {
   if (DM_PASSWORD) {
@@ -573,27 +573,33 @@ function enterDmSetup() {
   showSetupScreen('dm');
 }
 
-// ── CHARACTER PASSWORDS (optional, soft gate only) ─────────
+// ── PLAYER LOGINS (optional, soft gate only) ────────────────
 // Not real security — this is client-side JS, so anyone who opens dev tools can
 // read or bypass it. It just stops a player from casually loading a teammate's
-// character file/page instead of their own. Leave a password blank/omitted to
-// skip the prompt entirely for that character. Keyed by pid ("{teamIndex}_{memberIndex}").
-const CHARACTER_PASSWORDS = {
-  "13_0": "", // Elerrina   — Moon's Promise
-  "13_1": "", // Lyra       — Moon's Promise
-  "13_2": "", // Sevro      — Moon's Promise
-  "14_0": "", // Faelwen    — Chaos Agenda
-  "14_1": "", // Anileia    — Chaos Agenda
-  "14_2": "", // Amarantha  — Chaos Agenda
-  "15_0": "", // Fennek     — Rolling Tide
-  "15_1": "", // Ryuzen     — Rolling Tide
-  "15_2": "", // Sohsee     — Rolling Tide
-};
+// character(s) instead of their own. Leave a password blank to skip the prompt
+// entirely for that login. Each login's pids are ALWAYS shown together, merged,
+// for that player — this is separate from the DM's live "traveling together"
+// party groupings, which are session-only and apply across different logins.
+// pid format: "{teamIndex}_{memberIndex}" — 13_x Moon's Promise, 14_x Chaos
+// Agenda, 15_x Rolling Tide (member index 0/1/2 in TEAMS_DATA member order).
+const PLAYER_LOGINS = [
+  { name: "Philip",  pids: ["14_0","15_1"], password: "philip1"  }, // Faelwen + Ryuzen
+  { name: "Kolton",  pids: ["14_1","15_0"], password: "kolton1"  }, // Anileia + Fennek
+  { name: "Jchum",   pids: ["14_2","15_2"], password: "jchum1"   }, // Amarantha + Sohsee
+  { name: "Selene",  pids: ["13_0"],        password: "selene1" }, // Elerrina
+  { name: "Harmony", pids: ["13_1"],        password: "harmony1" }, // Lyra
+  { name: "Chris",   pids: ["13_2"],        password: "chris1"  }, // Sevro
+];
 
-// Prompts for a character's password if one is configured above. Returns true if
-// unlocked (no password set, or correct password entered), false otherwise.
+function findPlayerLoginForPid(pid) {
+  return PLAYER_LOGINS.find(pl => pl.pids.includes(pid));
+}
+
+// Prompts for a player login's password if one is configured above. Returns true
+// if unlocked (no password set, or correct password entered), false otherwise.
 function verifyCharacterPassword(pid, name) {
-  const pw = CHARACTER_PASSWORDS[pid];
+  const login = findPlayerLoginForPid(pid);
+  const pw = login?.password;
   if (!pw) return true;
   const entered = prompt(`Enter the password for ${name}:`);
   if (entered === null) return false;
@@ -3851,11 +3857,11 @@ function autoPublishLiveUpdate() {
 }
 
 // Player: called by the Firebase module whenever a new snapshot arrives. Restores
-// full world state, then fogs it down to whichever pids are currently in the
-// viewer's live party (their own character, plus anyone the DM has grouped them
-// with right now) — reusing the same isolation/fog-of-war rendering the DM's own
+// full world state, then fogs it down to the viewer's own pids (their permanent
+// player-login roster) plus anyone the DM has currently live-grouped any of those
+// pids with — reusing the same isolation/fog-of-war rendering the DM's own
 // spotlight view already relies on.
-function applyLiveGameState(data, myPid, myName) {
+function applyLiveGameState(data, myPids, myName) {
   round = data.round || 0;
   gamePhase = data.gamePhase || 'setup';
   logTick = data.logTick || 0;
@@ -3882,14 +3888,16 @@ function applyLiveGameState(data, myPid, myName) {
   logTypeFilter = 'all'; logPidFilters = null;
 
   const groups = data.parties || [];
-  const myGroup = groups.find(g => g.includes(myPid));
-  const effectivePids = myGroup ? [...new Set(myGroup)] : [myPid];
+  const extraFromGroups = groups
+    .filter(g => g.some(pid => myPids.includes(pid)))
+    .flat();
+  const effectivePids = [...new Set([...myPids, ...extraFromGroups])];
 
   setAppMode('player');
   setIsolation(effectivePids);
   document.getElementById('phase-badge').textContent = gamePhase === 'running' ? `Round ${round}` : 'Setup Phase';
   document.getElementById('player-view-badge').textContent =
-    `${myName}${effectivePids.length > 1 ? ` + party (${effectivePids.length})` : ''} · Round ${round}`;
+    `${myName}${effectivePids.length > myPids.length ? ` + party (${effectivePids.length})` : ''} · Round ${round}`;
   document.getElementById('setup-overlay').classList.remove('active');
   clearAllLogFilters();
   selectedParticipant = null; selectedCell = null;
@@ -3900,38 +3908,37 @@ function applyLiveGameState(data, myPid, myName) {
 }
 window.applyLiveGameState = applyLiveGameState;
 
-// Player: "who are you" picker for live view — same character list and passwords
-// as the offline file-based flow, just skipping the file entirely.
+// Player: "who are you" picker for live view — one row per player login (which
+// may cover 1 or 2 characters), gated by that login's password.
 function openLiveViewPicker() {
   const list = document.getElementById('live-view-pc-list');
   list.innerHTML = '';
-  PLAYER_TEAM_INDICES.forEach(ti => {
-    const team = teams[ti];
-    team.memberIds.forEach(pid => {
-      const p = getParticipant(pid);
-      const row = document.createElement('div');
-      row.className = 'char-select-row';
-      row.style.cssText = 'padding:7px 6px;display:flex;align-items:center;gap:8px;cursor:pointer;border-radius:2px;transition:background .15s;';
-      row.innerHTML = `<div style="width:8px;height:8px;border-radius:50%;background:${team.color};flex-shrink:0;"></div>
-        <span style="color:${team.color};font-family:'Cinzel',serif;font-size:.72rem;flex:1;">${p.name}${p.isCaptain?' ★':''}</span>
-        <span style="color:var(--text-dim);font-size:.62rem;">${team.name}</span>`;
-      row.onmouseenter = () => row.style.background = 'rgba(184,146,42,0.08)';
-      row.onmouseleave = () => row.style.background = '';
-      row.onclick = () => selectLiveCharacter(pid, p.name);
-      list.appendChild(row);
-    });
+  PLAYER_LOGINS.forEach(login => {
+    const chars = login.pids.map(pid => getParticipant(pid)).filter(Boolean);
+    const dots = chars.map(p => `<div style="width:8px;height:8px;border-radius:50%;background:${teams[p.teamIndex].color};flex-shrink:0;"></div>`).join('');
+    const names = chars.map(p => `<span style="color:${teams[p.teamIndex].color};">${p.name}${p.isCaptain?' ★':''}</span>`).join(' + ');
+    const row = document.createElement('div');
+    row.className = 'char-select-row';
+    row.style.cssText = 'padding:7px 6px;display:flex;align-items:center;gap:8px;cursor:pointer;border-radius:2px;transition:background .15s;';
+    row.innerHTML = `<div style="display:flex;gap:2px;flex-shrink:0;">${dots}</div>
+      <span style="font-family:'Cinzel',serif;font-size:.72rem;flex:1;">${login.name}</span>
+      <span style="font-size:.62rem;">${names}</span>`;
+    row.onmouseenter = () => row.style.background = 'rgba(184,146,42,0.08)';
+    row.onmouseleave = () => row.style.background = '';
+    row.onclick = () => selectPlayerLogin(login);
+    list.appendChild(row);
   });
   document.getElementById('live-view-picker-modal').classList.add('active');
 }
 
-function selectLiveCharacter(pid, name) {
-  if (!verifyCharacterPassword(pid, name)) return;
+function selectPlayerLogin(login) {
+  if (!verifyCharacterPassword(login.pids[0], login.name)) return;
   document.getElementById('live-view-picker-modal').classList.remove('active');
   if (typeof window.liveSyncSubscribe !== 'function') {
     alert('Live sync is not loaded yet — check your connection and try again in a moment.');
     return;
   }
-  window.liveSyncSubscribe(pid, name);
+  window.liveSyncSubscribe(login.pids, login.name);
 }
 
 init();
@@ -3972,11 +3979,12 @@ initGridInteraction();
   };
 
   // Player: subscribe to live updates; each snapshot is handed to applyLiveGameState.
-  window.liveSyncSubscribe = function (pid, name) {
+  // pids is the player-login's array of controlled character pids (1 or 2 of them).
+  window.liveSyncSubscribe = function (pids, name) {
     if (unsubscribePlayerListener) unsubscribePlayerListener();
     unsubscribePlayerListener = onSnapshot(gameDocRef, snap => {
       if (!snap.exists()) { alert('No live game published yet — ask your DM to hit Publish.'); return; }
-      window.applyLiveGameState(snap.data(), pid, name);
+      window.applyLiveGameState(snap.data(), pids, name);
     }, err => {
       alert('Live sync error: ' + err.message);
     });
