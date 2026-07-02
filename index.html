@@ -766,6 +766,10 @@ const PLAYER_TEAM_INDICES = [13, 14, 15]; // Moon's Promise, Chaos Agenda, Rolli
 let gamePhase = 'setup', round = 0;
 let participants = [], teams = [], cellStates = {};
 let selectedParticipant = null, selectedCell = null, lastRollCell = null, logTick = 0;
+// When set, overrides moveParticipant's default same-team auto-grouping — set by
+// the right-click menu to move exactly one character alone, or an explicit whole
+// team together, regardless of who else is stacked on the same tile.
+let selectedForcedGroup = null;
 let appMode = 'dm';        // 'dm' | 'player'
 let isolatedPids = null;   // null = show all, Set of pids = isolation/journey view
 let logEntries = [];       // persisted log for save/export/filter
@@ -995,8 +999,8 @@ function onHexClick(col, row, clientX, clientY) {
 
   if (selectedParticipant !== null) {
     hideTooltip();
-    moveParticipant(selectedParticipant, col, row);
-    selectedParticipant = null;
+    moveParticipant(selectedParticipant, col, row, selectedForcedGroup || undefined);
+    selectedParticipant = null; selectedForcedGroup = null;
     document.querySelectorAll('.member-row').forEach(el=>el.classList.remove('selected-member'));
     setStatus('');
     updateSelectionRing();
@@ -1205,7 +1209,7 @@ function playerMoveToken(pid, col, row) {
   // Track in journey
   if (!p.visitedCells) p.visitedCells = [];
   if (!p.visitedCells.some(v=>v.col===col&&v.row===row)) p.visitedCells.push({col, row, round});
-  selectedParticipant = null;
+  selectedParticipant = null; selectedForcedGroup = null;
   updateSelectionRing();
   renderHexGrid();
   renderSidebar();
@@ -1804,6 +1808,10 @@ function renderSidebar() {
 
 function selectParticipant(pid) {
   selectedParticipant=pid;
+  // Plain selection (roster click, etc.) always falls back to default behavior —
+  // the right-click menu sets selectedForcedGroup explicitly AFTER calling this,
+  // which overrides this reset for that one pick.
+  selectedForcedGroup=null;
   document.querySelectorAll('.member-row').forEach(el=>el.classList.toggle('selected-member',el.dataset.pid===pid));
   const p=getParticipant(pid);
   setStatus(`Selected: ${p.name}. Click or drag to move them.`);
@@ -2598,7 +2606,7 @@ function resetGame() {
   npcProcessedThisRound.clear();
   finalZoneCombatDone = false;
   document.getElementById('event-log-list').innerHTML = '';
-  selectedParticipant = null;
+  selectedParticipant = null; selectedForcedGroup = null;
   selectedCell = null;
   logTick = 0;
 
@@ -2827,9 +2835,11 @@ function initGridInteraction() {
           if (appMode === 'player') {
             playerMoveToken(mainPid, tgt.col, tgt.row);
           } else if (hasSpecificSelection) {
-            // A specific character was pre-selected (e.g. via right-click "unstack")
-            // — move just them (+ same-team teammates), leaving the rest behind.
-            moveParticipant(mainPid, tgt.col, tgt.row);
+            // A specific character or team was pre-selected via the right-click
+            // menu — selectedForcedGroup pins exactly that set (just the one
+            // character, or that whole team), overriding the default same-team
+            // auto-grouping so an individual pick never drags teammates along.
+            moveParticipant(mainPid, tgt.col, tgt.row, selectedForcedGroup || undefined);
           } else {
             // Nothing specifically selected — drag the whole stack together,
             // regardless of team.
@@ -2838,7 +2848,7 @@ function initGridInteraction() {
           if (hasSpecificSelection) {
             // Selection doesn't stick past one drag — the next drag on any stack
             // (including this one, if it's re-formed) defaults back to "move all".
-            selectedParticipant = null;
+            selectedParticipant = null; selectedForcedGroup = null;
             document.querySelectorAll('.member-row').forEach(el=>el.classList.remove('selected-member'));
             updateSelectionRing();
           }
@@ -2887,32 +2897,83 @@ function initGridInteraction() {
   document.addEventListener('keydown', e => { if (e.key === 'Escape') hideTooltip(); });
 }
 
+// Right-click a stacked tile: top level lists each team present; hovering a
+// team opens a submenu (flyout to the left) with "Team" (move everyone from
+// that team present here, together) followed by each individual member
+// (selects and moves only that one character, never their teammates).
 function showCtxMenu(col, row, e) {
   hideCtxMenu();
   const occ = cellStates[`${col},${row}`].occupants.filter(id=>getParticipant(id)?.alive);
   if (occ.length <= 1) {
-    if (occ.length===1) selectParticipant(occ[0]);
+    if (occ.length===1) { selectParticipant(occ[0]); selectedForcedGroup = [occ[0]]; }
     return;
   }
+
+  const byTeam = new Map();
+  occ.forEach(pid => {
+    const teamIndex = getParticipant(pid).teamIndex;
+    if (!byTeam.has(teamIndex)) byTeam.set(teamIndex, []);
+    byTeam.get(teamIndex).push(pid);
+  });
+
   const menu = document.createElement('div');
   menu.style.cssText = `position:fixed;z-index:500;background:#13131a;border:1px solid #b8922a;
     border-radius:3px;padding:5px 0;box-shadow:0 4px 20px rgba(0,0,0,0.85);
     left:${Math.min(e.clientX,window.innerWidth-180)}px;
-    top:${Math.min(e.clientY,window.innerHeight-220)}px;min-width:165px;`;
+    top:${Math.min(e.clientY,window.innerHeight-260)}px;min-width:165px;`;
   const hdr = document.createElement('div');
   hdr.style.cssText='padding:4px 10px 6px;font-family:Cinzel,serif;font-size:.5rem;color:#6a6475;letter-spacing:1px;text-transform:uppercase;border-bottom:1px solid #2a2a3a;margin-bottom:3px;';
   hdr.textContent=`(${col},${row}) — Select to Move`;
   menu.appendChild(hdr);
-  occ.forEach(pid=>{
-    const p=getParticipant(pid), team=teams[p.teamIndex];
-    const item=document.createElement('div');
-    item.style.cssText='padding:5px 10px;cursor:pointer;font-size:.68rem;color:#c8c0b0;display:flex;align-items:center;gap:7px;transition:background .1s;';
-    item.innerHTML=`<span style="width:7px;height:7px;border-radius:50%;background:${team.color};flex-shrink:0;display:inline-block;"></span><span>${p.name}${p.isCaptain?' ★':''}</span>`;
-    item.onmouseenter=()=>item.style.background='rgba(184,146,42,0.1)';
-    item.onmouseleave=()=>item.style.background='';
-    item.onclick=()=>{ selectParticipant(pid); setStatus(`Selected: ${p.name}. Click or drag to move.`); hideCtxMenu(); };
+
+  [...byTeam.entries()].forEach(([teamIndex, pids]) => {
+    const team = teams[teamIndex];
+    const item = document.createElement('div');
+    item.style.cssText = 'position:relative;padding:5px 10px;cursor:pointer;font-size:.68rem;color:#c8c0b0;display:flex;align-items:center;gap:7px;transition:background .1s;';
+    item.innerHTML = `<span style="width:7px;height:7px;border-radius:50%;background:${team.color};flex-shrink:0;display:inline-block;"></span>
+      <span style="flex:1;">${team.name}</span>
+      <span style="color:var(--text-dim);font-size:.55rem;">▸</span>`;
+
+    const sub = document.createElement('div');
+    sub.style.cssText = `position:absolute;top:0;right:100%;background:#13131a;border:1px solid #b8922a;
+      border-radius:3px;padding:5px 0;box-shadow:0 4px 20px rgba(0,0,0,0.85);min-width:150px;display:none;`;
+
+    const teamOpt = document.createElement('div');
+    teamOpt.style.cssText = 'padding:5px 10px;cursor:pointer;font-size:.64rem;color:var(--gold);font-weight:bold;border-bottom:1px solid #2a2a3a;margin-bottom:2px;';
+    teamOpt.textContent = `Team (${pids.length})`;
+    teamOpt.onmouseenter = () => teamOpt.style.background='rgba(184,146,42,0.1)';
+    teamOpt.onmouseleave = () => teamOpt.style.background='';
+    teamOpt.onclick = () => {
+      selectParticipant(pids[0]);
+      selectedForcedGroup = [...pids];
+      document.querySelectorAll('.member-row').forEach(el=>el.classList.toggle('selected-member', pids.includes(el.dataset.pid)));
+      setStatus(`Selected: ${team.name} (${pids.length}). Click or drag to move them together.`);
+      hideCtxMenu();
+    };
+    sub.appendChild(teamOpt);
+
+    pids.forEach(pid => {
+      const p = getParticipant(pid);
+      const memberOpt = document.createElement('div');
+      memberOpt.style.cssText = 'padding:5px 10px;cursor:pointer;font-size:.66rem;color:#c8c0b0;';
+      memberOpt.textContent = `${p.name}${p.isCaptain?' ★':''}`;
+      memberOpt.onmouseenter = () => memberOpt.style.background='rgba(184,146,42,0.1)';
+      memberOpt.onmouseleave = () => memberOpt.style.background='';
+      memberOpt.onclick = () => {
+        selectParticipant(pid);
+        selectedForcedGroup = [pid];
+        setStatus(`Selected: ${p.name}. Click or drag to move them alone.`);
+        hideCtxMenu();
+      };
+      sub.appendChild(memberOpt);
+    });
+
+    item.appendChild(sub);
+    item.onmouseenter = () => { item.style.background='rgba(184,146,42,0.1)'; sub.style.display='block'; };
+    item.onmouseleave = () => { item.style.background=''; sub.style.display='none'; };
     menu.appendChild(item);
   });
+
   document.body.appendChild(menu);
   ctxMenu=menu;
 }
@@ -3010,7 +3071,7 @@ function applyDMSave(data) {
   npcProcessedThisRound.clear();
   document.getElementById('btn-start').style.display = 'none';
   clearAllLogFilters();
-  selectedParticipant = null; selectedCell = null;
+  selectedParticipant = null; selectedForcedGroup = null; selectedCell = null;
 
   setAppMode('dm');
   document.getElementById('setup-overlay').classList.remove('active');
@@ -3296,7 +3357,7 @@ function applyMultiPlayerProgress(multiData, entries) {
   setIsolation(pids);
   document.getElementById('setup-overlay').classList.remove('active');
   clearAllLogFilters();
-  selectedParticipant = null; selectedCell = null;
+  selectedParticipant = null; selectedForcedGroup = null; selectedCell = null;
 
   renderLog();
   renderHexGrid(); renderSidebar(); updateStats();
@@ -3309,7 +3370,7 @@ function returnToTitle() {
   participants.forEach(p => { p.position = null; p.alive = true; p.visitedCells = []; });
   initCellStates();
   isolatedPids = null;
-  selectedParticipant = null; selectedCell = null;
+  selectedParticipant = null; selectedForcedGroup = null; selectedCell = null;
   gamePhase = 'setup'; round = 0; logTick = 0;
 
   // Reset UI
@@ -3382,7 +3443,7 @@ function applyPlayerProgress(data) {
   setIsolation([ch.pid]);
   document.getElementById('setup-overlay').classList.remove('active');
   clearAllLogFilters();
-  selectedParticipant = null; selectedCell = null;
+  selectedParticipant = null; selectedForcedGroup = null; selectedCell = null;
 
   renderLog();
   renderHexGrid(); renderSidebar(); updateStats();
@@ -4124,7 +4185,7 @@ function applyLiveGameState(data, myPids, myName) {
       `${myName}${effectivePids.length > myPids.length ? ` + party (${effectivePids.length})` : ''} · Round ${round}`;
     document.getElementById('setup-overlay').classList.remove('active');
     clearAllLogFilters();
-    selectedParticipant = null; selectedCell = null;
+    selectedParticipant = null; selectedForcedGroup = null; selectedCell = null;
 
     renderLog();
     renderHexGrid(); renderSidebar(); updateStats();
