@@ -2386,6 +2386,15 @@ function setAppMode(mode) {
   appMode = mode;
   document.body.setAttribute('data-mode', mode);
   document.getElementById('btn-back-to-title').style.display = mode === 'player' ? 'inline-block' : 'none';
+
+  // Entering DM mode must kill any leftover Live View subscription/poll from
+  // earlier in this tab's session — otherwise a stray publish or the 20s poll
+  // fallback keeps calling applyLiveGameState() and yanking the tab back into
+  // player mode indefinitely, even though the DM never asked for that.
+  if (mode === 'dm') {
+    if (livePollInterval) { clearInterval(livePollInterval); livePollInterval = null; }
+    if (typeof window.liveSyncUnsubscribe === 'function') window.liveSyncUnsubscribe();
+  }
 }
 
 // ── LOG & STATS ───────────────────────────────────────────
@@ -4657,6 +4666,14 @@ initRosterDragToBoard();
     }, err => {
       alert('Live sync error: ' + err.message);
     });
+  };
+
+  // Tears down an active Live View subscription. Without this, a browser tab
+  // that ever opened Live View keeps getting yanked back into player mode on
+  // every publish (or every 20s via the poll fallback) even after switching to
+  // DM mode in the same tab, since the listener/interval never stopped running.
+  window.liveSyncUnsubscribe = function () {
+    if (unsubscribePlayerListener) { unsubscribePlayerListener(); unsubscribePlayerListener = null; }
   };
 </script>
 </body>
