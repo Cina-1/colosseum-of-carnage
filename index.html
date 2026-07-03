@@ -15,19 +15,19 @@
     --text:#c8c0b0;--text-dim:#6a6475;--text-bright:#e8dfc8;--gold:#b8922a;--gold-bright:#d4a832;
     --red-elim:#8b1a1a;
   }
-  /* Light mode covers chrome only (header, sidebar, toolbar frame, modals, log) —
-     the hex grid/map itself always stays dark like a tactical display, since its
-     rendering is tuned with ~190 hardcoded colors assuming a near-black backdrop.
-     Re-declaring the dark values scoped to .grid-area lets it opt back out of the
-     light override via normal CSS custom-property cascade. */
+  /* Light mode covers all chrome, including the toolbar and the canvas area
+     around the hex board — the hex TILES themselves stay dark regardless, since
+     their fills/strokes are ~190 hardcoded colors, not CSS variables, tuned for
+     a near-black backdrop. Only the hover tooltip needs an explicit dark scope:
+     it has its own hardcoded dark background, so its var-driven text needs to
+     stay dark-mode-styled too or it goes unreadable (dark-on-dark). */
   body[data-theme="light"] {
     --bg:#f4f1ea;--surface:#ffffff;--surface2:#eeeae0;--border:#d8d2c4;--border-bright:#c2baa6;
     --text:#2a2620;--text-dim:#7a7464;--text-bright:#161310;--gold:#9c7a1f;--gold-bright:#7a5f18;
     --red-elim:#c0392b;
   }
-  body[data-theme="light"] .grid-area {
-    --bg:#0d0d0f;--surface:#13131a;--surface2:#1a1a24;--border:#2a2a3a;--border-bright:#3a3a50;
-    --text:#c8c0b0;--text-dim:#6a6475;--text-bright:#e8dfc8;--gold:#b8922a;--gold-bright:#d4a832;
+  body[data-theme="light"] #hex-tooltip {
+    --text:#c8c0b0;--text-dim:#6a6475;--text-bright:#e8dfc8;--gold:#b8922a;
   }
   *{box-sizing:border-box;margin:0;padding:0;}
   body{background:var(--bg);color:var(--text);font-family:'Crimson Text',serif;height:100vh;display:flex;flex-direction:column;overflow:hidden;user-select:none;-webkit-user-select:none;}
