@@ -398,7 +398,7 @@
     <div class="settings-row">
       <div class="settings-options" style="align-items:center;gap:8px;">
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:.68rem;color:var(--text);">
-          <input type="checkbox" id="auto-backup-toggle" onchange="autoBackupEnabled=this.checked" style="width:14px;height:14px;cursor:pointer;">
+          <input type="checkbox" id="auto-backup-toggle" onchange="setAutoBackupEnabled(this.checked)" style="width:14px;height:14px;cursor:pointer;">
           Download a save file automatically after every Next Round
         </label>
       </div>
@@ -2801,6 +2801,8 @@ function restoreUiPreferences() {
     if (scale) setUiScale(scale);
     const theme = localStorage.getItem('carnage-ui-theme');
     if (theme) setUiTheme(theme);
+    const autoBackup = localStorage.getItem('carnage-auto-backup');
+    if (autoBackup !== null) autoBackupEnabled = autoBackup === '1';
   } catch {}
 }
 
@@ -3304,6 +3306,11 @@ let autoBackupEnabled = false;
 function autoDownloadBackup() {
   if (!autoBackupEnabled) return;
   downloadJSON(buildDMSaveData(), `arena-dm-autosave-round${round}.json`);
+}
+
+function setAutoBackupEnabled(enabled) {
+  autoBackupEnabled = enabled;
+  try { localStorage.setItem('carnage-auto-backup', enabled ? '1' : '0'); } catch {}
 }
 
 function openSaveModal() {
