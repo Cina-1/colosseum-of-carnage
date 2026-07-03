@@ -66,8 +66,10 @@
     transition:all .2s;white-space:nowrap;flex-shrink:0;}
   .rest-btn:hover{border-color:#27ae60;color:#4adf8a;}
   .rest-done{opacity:.32;pointer-events:none;}
-  .btn-npc{border-color:#6a3a8a;color:#b07adc;}
-  .btn-npc:hover{background:rgba(106,58,138,.2);}
+  .btn-npc{border-color:#8a6d1a;color:#e6c229;}
+  .btn-npc:hover{background:rgba(138,109,26,.2);}
+  .btn-orange{border-color:#b34700;color:#ff8c42;}
+  .btn-orange:hover{background:rgba(255,90,0,.15);}
 
   /* LOG CONTROLS */
   .log-controls{padding:5px 8px 4px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:4px;}
@@ -263,11 +265,11 @@
       <div class="toolbar-row">
         <button class="btn btn-gold dm-only" id="btn-randomize" onclick="randomizePlacements()">⚄ Randomize</button>
         <button class="btn dm-only" id="btn-clear-grid" onclick="clearAllPlacements()">Clear Grid</button>
-        <button class="btn" id="btn-zones" onclick="toggleZones()" style="display:none;" title="Toggle zone ring visibility">● Hide Zones</button>
+        <button class="btn btn-orange" id="btn-zones" onclick="toggleZones()" style="display:none;" title="Toggle zone ring visibility">⬡ Zones: On</button>
         <button class="btn dm-only" id="btn-zone-pause" onclick="toggleZonePause()" style="display:none;" title="Freeze the zone at its current size">⏸ Pause Zone</button>
         <button class="btn btn-green dm-only" id="btn-start" onclick="startGame()" style="display:none;">▶ Begin the Games</button>
-        <button class="btn dm-only" id="btn-next-round" onclick="nextRound()" style="display:none;">Next Round</button>
         <button class="btn btn-npc dm-only" id="btn-npc-auto" onclick="runNpcAuto()" style="display:none;">⚡ NPC Auto</button>
+        <button class="btn btn-green dm-only" id="btn-next-round" onclick="nextRound()" style="display:none;">Next Round</button>
         <div class="toolbar-status" id="toolbar-status">Select a participant, then click a hex to place them.</div>
       </div>
       <!-- Row 2: utility + view -->
@@ -2569,7 +2571,9 @@ function toggleZones() {
   showZones = !showZones;
   const btn = document.getElementById('btn-zones');
   if (btn) {
-    btn.textContent = showZones ? '● Hide Zones' : '○ Show Zones';
+    // State label, not an action label — says what's currently true, so there's
+    // no guessing whether clicking will show or hide them.
+    btn.textContent = showZones ? '⬡ Zones: On' : '⬡ Zones: Off';
     btn.style.borderColor = showZones ? '' : 'var(--text-dim)';
     btn.style.color = showZones ? '' : 'var(--text-dim)';
   }
