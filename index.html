@@ -98,6 +98,7 @@
   .grid-area{flex:1;display:flex;flex-direction:column;overflow:hidden;background:var(--bg);}
   .grid-toolbar{display:flex;flex-direction:column;gap:4px;padding:7px 12px;border-bottom:1px solid var(--border);background:var(--surface);flex-shrink:0;}
   .toolbar-row{display:flex;align-items:center;gap:8px;}
+  .toolbar-row > .btn{min-width:88px;text-align:center;}
   .btn{font-family:'Cinzel',serif;font-size:.58rem;letter-spacing:1px;padding:5px 11px;border:1px solid var(--border-bright);background:var(--surface2);color:var(--text);cursor:pointer;border-radius:2px;text-transform:uppercase;transition:all .2s;}
   .btn:hover{border-color:var(--gold);color:var(--gold);}
   .btn-gold{border-color:var(--gold);color:var(--gold);background:rgba(184,146,42,.08);}
@@ -262,6 +263,8 @@
       <div class="toolbar-row">
         <button class="btn btn-gold dm-only" id="btn-randomize" onclick="randomizePlacements()">⚄ Randomize</button>
         <button class="btn dm-only" id="btn-clear-grid" onclick="clearAllPlacements()">Clear Grid</button>
+        <button class="btn" id="btn-zones" onclick="toggleZones()" style="display:none;" title="Toggle zone ring visibility">● Hide Zones</button>
+        <button class="btn dm-only" id="btn-zone-pause" onclick="toggleZonePause()" style="display:none;" title="Freeze the zone at its current size">⏸ Pause Zone</button>
         <button class="btn btn-green dm-only" id="btn-start" onclick="startGame()" style="display:none;">▶ Begin the Games</button>
         <button class="btn dm-only" id="btn-next-round" onclick="nextRound()" style="display:none;">Next Round</button>
         <button class="btn btn-npc dm-only" id="btn-npc-auto" onclick="runNpcAuto()" style="display:none;">⚡ NPC Auto</button>
@@ -269,19 +272,17 @@
       </div>
       <!-- Row 2: utility + view -->
       <div class="toolbar-row">
-        <button class="btn dm-only" onclick="saveGameDM()" title="Save full game state">💾 Save</button>
+        <button class="btn dm-only" onclick="openSaveModal()" title="Save game state / manage auto-backup">💾 Save</button>
         <button class="btn dm-only" onclick="openExportModal()" title="Export player character progress">📤 Export</button>
-        <button class="btn dm-only" onclick="enterDmLiveSync()" title="Publish live game state for players to watch">🌐 Live Sync</button>
+        <button class="btn dm-only" onclick="enterDmLiveSync()" title="Manage live party groups and publish to players">👥 Groups</button>
         <button class="btn btn-danger dm-only" onclick="confirmReset()">↺ Reset</button>
         <button class="btn" id="btn-back-to-title" style="display:none;" onclick="returnToTitle()">← Title</button>
         <button class="btn" id="btn-live-refresh" style="display:none;" onclick="refreshLiveView()" title="Manually re-fetch the latest game state">🔄 Refresh</button>
-        <button class="btn" id="btn-zones" onclick="toggleZones()" title="Toggle zone ring visibility">⬡ Zones</button>
-        <button class="btn dm-only" id="btn-zone-pause" onclick="toggleZonePause()" title="Freeze the zone at its current size">⏸ Pause Zone</button>
         <div style="display:flex;align-items:center;gap:4px;margin-left:auto;">
           <button class="btn" onclick="adjustZoom(-0.15)" title="Zoom Out">−</button>
           <span id="zoom-label" style="font-family:'Share Tech Mono',monospace;font-size:.6rem;color:var(--text-dim);min-width:36px;text-align:center;">100%</span>
           <button class="btn" onclick="adjustZoom(0.15)" title="Zoom In">+</button>
-          <button class="btn" onclick="resetZoom()" title="Reset Zoom">⊙</button>
+          <button class="btn" onclick="zoomToExtents()" title="Fit the whole grid to the screen">⊡</button>
           <button class="btn" onclick="document.getElementById('settings-modal').classList.add('active')" title="Settings" style="margin-left:6px;">⚙</button>
         </div>
       </div>
@@ -358,8 +359,19 @@
         <button class="btn" onclick="setUiScale('xl')">Extra Large</button>
       </div>
     </div>
+    <div class="modal-buttons" style="margin-top:8px;">
+      <button class="btn btn-gold" onclick="document.getElementById('settings-modal').classList.remove('active')">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="save-modal" onclick="if(event.target===this)this.classList.remove('active')">
+  <div class="settings-modal">
+    <h2>💾 Save</h2>
     <div class="settings-row">
-      <div class="settings-label">Auto-Backup</div>
+      <button class="btn btn-gold" onclick="saveGameDM()" style="width:100%;">💾 Save Now</button>
+    </div>
+    <div class="settings-row">
       <div class="settings-options" style="align-items:center;gap:8px;">
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:.68rem;color:var(--text);">
           <input type="checkbox" id="auto-backup-toggle" onchange="autoBackupEnabled=this.checked" style="width:14px;height:14px;cursor:pointer;">
@@ -368,7 +380,7 @@
       </div>
     </div>
     <div class="modal-buttons" style="margin-top:8px;">
-      <button class="btn btn-gold" onclick="document.getElementById('settings-modal').classList.remove('active')">Close</button>
+      <button class="btn btn-gold" onclick="document.getElementById('save-modal').classList.remove('active')">Close</button>
     </div>
   </div>
 </div>
@@ -416,7 +428,7 @@
 <!-- Live Sync (DM): publish game state + manage who's currently traveling together -->
 <div class="modal-overlay" id="live-sync-modal">
   <div class="modal" style="min-width:380px;max-height:85vh;display:flex;flex-direction:column;">
-    <h2>🌐 Live Sync</h2>
+    <h2>👥 Groups</h2>
     <p id="live-sync-status" style="margin-bottom:10px;color:var(--text-dim);">Not connected.</p>
     <div style="margin-bottom:12px;">
       <button class="btn btn-gold" onclick="publishLiveUpdate()">📡 Publish Now</button>
@@ -536,8 +548,8 @@
       <h2>◈ Player</h2>
       <p>Load your character progress file to view the tiles you've visited, events you experienced, and paths you've crossed.</p>
       <div class="setup-buttons" style="margin-top:14px;">
-        <button class="btn btn-gold" onclick="document.getElementById('file-load-player').click()">📂 Load Character Progress</button>
-        <button class="btn" onclick="openLiveViewPicker()">🌐 Live View (no file needed)</button>
+        <button class="btn btn-gold" onclick="openLiveViewPicker()">🌐 Live View</button>
+        <button class="btn" onclick="document.getElementById('file-load-player').click()">📂 Load View</button>
       </div>
       <div style="margin-top:12px;text-align:left;">
         <button class="btn" style="font-size:.52rem;padding:3px 8px;" onclick="showSetupScreen('root')">← Back</button>
@@ -975,6 +987,9 @@ function init() {
   buildHexGrid();
   renderSidebar();
   updateStats();
+  // Default to fit-to-screen rather than a fixed 100% — the container isn't
+  // laid out with its final size until after this initial render pass.
+  setTimeout(zoomToExtents, 0);
 }
 
 function initCellStates() {
@@ -2313,8 +2328,7 @@ function startGame() {
   document.getElementById('btn-start').style.display = 'none';
   document.getElementById('btn-next-round').style.display = 'inline-block';
   document.getElementById('btn-npc-auto').style.display = 'inline-block';
-  document.getElementById('btn-randomize').style.display = 'none';
-  document.getElementById('btn-clear-grid').style.display = 'none';
+  updatePhaseButtonVisibility();
   setStatus('The Games have begun. Select a participant and move them.');
   addLog('⚔ The Games Have Begun — Round 1', 'round');
   updateStats();
@@ -2540,13 +2554,24 @@ function updateStats() {
 
 function setStatus(msg) { document.getElementById('toolbar-status').textContent=msg||'Select a participant, then click a hex to move them.'; }
 
+// Randomize/Clear Grid only make sense before the game starts; Zones/Pause Zone
+// only make sense once it's running — they share the same toolbar slot so the
+// row stays a consistent size regardless of phase.
+function updatePhaseButtonVisibility() {
+  const isRunning = gamePhase === 'running';
+  document.getElementById('btn-randomize').style.display = isRunning ? 'none' : 'inline-block';
+  document.getElementById('btn-clear-grid').style.display = isRunning ? 'none' : 'inline-block';
+  document.getElementById('btn-zones').style.display = isRunning ? 'inline-block' : 'none';
+  document.getElementById('btn-zone-pause').style.display = isRunning ? 'inline-block' : 'none';
+}
+
 function toggleZones() {
   showZones = !showZones;
   const btn = document.getElementById('btn-zones');
   if (btn) {
+    btn.textContent = showZones ? '● Hide Zones' : '○ Show Zones';
     btn.style.borderColor = showZones ? '' : 'var(--text-dim)';
     btn.style.color = showZones ? '' : 'var(--text-dim)';
-    btn.style.opacity = showZones ? '1' : '0.5';
   }
   renderHexGrid();
 }
@@ -2599,9 +2624,19 @@ function adjustZoom(delta) {
   applyZoom();
 }
 
-function resetZoom() {
-  zoomLevel = 1.0;
+// Fits the whole grid to whatever screen space is currently available — dynamic
+// per viewport/window size, rather than a fixed percentage.
+function zoomToExtents() {
+  const scroll = document.querySelector('.grid-scroll');
+  if (!scroll) return;
+  const totalW = GRID_COLS * HEX_W + HEX_W / 2 + 12;
+  const totalH = (GRID_ROWS - 1) * VERT_SPACING + HEX_SIZE * 2 + 12;
+  const availW = scroll.clientWidth - 32;
+  const availH = scroll.clientHeight - 32;
+  const fit = Math.min(availW / totalW, availH / totalH);
+  zoomLevel = Math.min(3.0, Math.max(0.3, fit));
   applyZoom();
+  scroll.scrollTo({left: 0, top: 0});
 }
 
 function applyZoom() {
@@ -2723,8 +2758,7 @@ function resetGame() {
   document.getElementById('btn-start').style.display = 'none';
   document.getElementById('btn-next-round').style.display = 'none';
   document.getElementById('btn-npc-auto').style.display = 'none';
-  document.getElementById('btn-randomize').style.display = 'inline-block';
-  document.getElementById('btn-clear-grid').style.display = 'inline-block';
+  updatePhaseButtonVisibility();
   zonePaused = false; zoneFreezeRound = null;
   npcProcessedThisRound.clear();
   finalZoneCombatDone = false;
@@ -3154,6 +3188,11 @@ function autoDownloadBackup() {
   downloadJSON(buildDMSaveData(), `arena-dm-autosave-round${round}.json`);
 }
 
+function openSaveModal() {
+  document.getElementById('auto-backup-toggle').checked = autoBackupEnabled;
+  document.getElementById('save-modal').classList.add('active');
+}
+
 function handleLoadDM(event) {
   const file = event.target.files[0];
   if (!file) return;
@@ -3204,8 +3243,7 @@ function applyDMSave(data) {
   document.getElementById('phase-badge').classList.toggle('active', isRunning);
   document.getElementById('btn-next-round').style.display = isRunning ? 'inline-block' : 'none';
   document.getElementById('btn-npc-auto').style.display = isRunning ? 'inline-block' : 'none';
-  document.getElementById('btn-randomize').style.display = isRunning ? 'none' : 'inline-block';
-  document.getElementById('btn-clear-grid').style.display = isRunning ? 'none' : 'inline-block';
+  updatePhaseButtonVisibility();
   npcProcessedThisRound.clear();
   document.getElementById('btn-start').style.display = 'none';
   clearAllLogFilters();
@@ -3519,8 +3557,7 @@ function returnToTitle() {
   document.getElementById('phase-badge').classList.remove('active');
   document.getElementById('btn-start').style.display = 'none';
   document.getElementById('btn-next-round').style.display = 'none';
-  document.getElementById('btn-randomize').style.display = 'inline-block';
-  document.getElementById('btn-clear-grid').style.display = 'inline-block';
+  updatePhaseButtonVisibility();
   zonePaused = false; zoneFreezeRound = null;
   document.getElementById('event-log-list').innerHTML = '';
   clearAllLogFilters();
@@ -3578,6 +3615,7 @@ function applyPlayerProgress(data) {
   round = data.exportedRound || 0;
   gamePhase = 'player-view';
   document.getElementById('phase-badge').textContent = `Round ${round}`;
+  updatePhaseButtonVisibility();
   document.getElementById('player-view-badge').textContent = `${ch.name} · Round ${round}`;
 
   setAppMode('player');
@@ -4324,6 +4362,7 @@ function applyLiveGameState(data, myPids, myName) {
     setAppMode('player');
     setIsolation(effectivePids);
     document.getElementById('phase-badge').textContent = gamePhase === 'running' ? `Round ${round}` : 'Setup Phase';
+    updatePhaseButtonVisibility();
     document.getElementById('player-view-badge').textContent =
       `${myName}${effectivePids.length > myPids.length ? ` + party (${effectivePids.length})` : ''} · Round ${round}`;
     document.getElementById('setup-overlay').classList.remove('active');
