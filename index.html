@@ -1521,16 +1521,16 @@ function renderHexGrid() {
 
       // Isolation: hide cells the isolated character(s) never visited (death tiles always show)
       if (isoVisited && !isoVisited.has(key) && !cellHasDeath) {
-        fill.setAttribute('fill', light ? '#e3dcc8' : '#1a1a22');
-        border.setAttribute('stroke', light ? '#c4bb9e' : '#14141c');
+        fill.setAttribute('fill', light ? '#cabe94' : '#1a1a22');
+        border.setAttribute('stroke', light ? '#9c8860' : '#14141c');
         border.setAttribute('stroke-width','0.5');
         continue;
       }
 
       // Pid filter: absolute fog of war (death tiles always show)
       if (pidVisited && !pidVisited.has(key) && !cellHasDeath) {
-        fill.setAttribute('fill', light ? '#ddd4bc' : '#0d0d14');
-        border.setAttribute('stroke', light ? '#bfb494' : '#0a0a11');
+        fill.setAttribute('fill', light ? '#c0b284' : '#0d0d14');
+        border.setAttribute('stroke', light ? '#8f7a52' : '#0a0a11');
         border.setAttribute('stroke-width','0.5');
         continue;
       }
@@ -1551,8 +1551,8 @@ function renderHexGrid() {
             })()
           : occ);
 
-      let fillColor = light ? '#e8e2d2' : '#1a1a22';
-      let strokeColor = light ? '#c9c0a8' : '#232333';
+      let fillColor = light ? '#d4c8a5' : '#1a1a22';
+      let strokeColor = light ? '#a89468' : '#232333';
       let strokeW='0.8';
       if (occRender.length>0) {
         const teamIndicesForFill=[...new Set(occRender.map(id=>getParticipant(id).teamIndex))];
@@ -1626,10 +1626,10 @@ function renderHexGrid() {
             const tc = teams[firstEv.triggeredBy[0].teamIndex].color;
             fillColor=hexToRgba(tc,.1); strokeColor=hexToRgba(tc,.25); strokeW='0.9';
           } else {
-            fillColor = light ? '#e0d9c4' : '#141420'; strokeColor = light ? '#c2b99c' : '#1e1e2e';
+            fillColor = light ? '#cabb90' : '#141420'; strokeColor = light ? '#a08c5c' : '#1e1e2e';
           }
         } else {
-          fillColor = light ? '#e0d9c4' : '#141420'; strokeColor = light ? '#c2b99c' : '#1e1e2e';
+          fillColor = light ? '#cabb90' : '#141420'; strokeColor = light ? '#a08c5c' : '#1e1e2e';
         }
       } else if (cs.state==='starting') {
         fillColor='rgba(184,146,42,0.06)'; strokeColor='rgba(184,146,42,0.25)'; strokeW='1';
@@ -1637,8 +1637,8 @@ function renderHexGrid() {
       // Death cells: dark fill + skull overlay (dusty rose in light mode, still reads as "danger")
       const hasDeathMark = !!(cs.casualties && cs.casualties.length > 0);
       if (hasDeathMark && occRender.length === 0) {
-        fillColor = light ? 'rgba(205,160,155,0.85)' : 'rgba(28,22,22,0.96)';
-        strokeColor = light ? 'rgba(160,60,60,0.55)' : 'rgba(100,55,55,0.45)';
+        fillColor = light ? 'rgba(190,145,140,0.88)' : 'rgba(28,22,22,0.96)';
+        strokeColor = light ? 'rgba(150,55,55,0.6)' : 'rgba(100,55,55,0.45)';
         strokeW='1';
       }
       fill.setAttribute('fill',fillColor);
@@ -2777,6 +2777,10 @@ function setUiTheme(theme) {
   document.getElementById('theme-btn-dark').classList.toggle('active-scale', theme === 'dark');
   document.getElementById('theme-btn-light').classList.toggle('active-scale', theme === 'light');
   try { localStorage.setItem('carnage-ui-theme', theme); } catch {}
+  // Hex fill/stroke colors are computed once per renderHexGrid() call and baked
+  // into the SVG attributes — they don't follow the CSS variable cascade like
+  // the rest of the chrome, so toggling data-theme alone doesn't repaint them.
+  renderHexGrid();
 }
 
 function restoreUiPreferences() {
