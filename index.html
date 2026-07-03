@@ -381,8 +381,8 @@
         <button class="btn active-scale" id="theme-btn-dark" onclick="setUiTheme('dark')">Dark</button>
         <button class="btn" id="theme-btn-light" onclick="setUiTheme('light')">Light</button>
       </div>
-      <p style="font-size:.6rem;color:var(--text-dim);margin-top:4px;">The hex grid always stays dark, like a tactical display.</p>
     </div>
+    <p style="font-size:.6rem;color:var(--text-dim);margin:-8px 0 12px;">The hex grid always stays dark, like a tactical display.</p>
     <div class="modal-buttons" style="margin-top:8px;">
       <button class="btn btn-gold" onclick="document.getElementById('settings-modal').classList.remove('active')">Close</button>
     </div>
@@ -2740,6 +2740,10 @@ function hexToRgba(hex,alpha) {
 
 // ── UI SCALE ─────────────────────────────────────────────
 let currentScale = 'normal';
+// Persisted in localStorage (this device/browser) rather than synced to the
+// cloud — players don't have Firestore write access by design (only the DM
+// does), so this is what keeps a preference from resetting on every reload
+// without opening up write access just for UI settings.
 function setUiScale(scale) {
   currentScale = scale;
   if (scale === 'normal') document.documentElement.removeAttribute('data-scale');
@@ -2747,6 +2751,7 @@ function setUiScale(scale) {
   document.querySelectorAll('#scale-options .btn').forEach((btn, i) => {
     btn.classList.toggle('active-scale', ['sm','normal','lg','xl'][i] === scale);
   });
+  try { localStorage.setItem('carnage-ui-scale', scale); } catch {}
 }
 
 // Chrome-only light mode — the hex grid opts back out of this via a scoped
@@ -2756,6 +2761,16 @@ function setUiTheme(theme) {
   else document.body.removeAttribute('data-theme');
   document.getElementById('theme-btn-dark').classList.toggle('active-scale', theme === 'dark');
   document.getElementById('theme-btn-light').classList.toggle('active-scale', theme === 'light');
+  try { localStorage.setItem('carnage-ui-theme', theme); } catch {}
+}
+
+function restoreUiPreferences() {
+  try {
+    const scale = localStorage.getItem('carnage-ui-scale');
+    if (scale) setUiScale(scale);
+    const theme = localStorage.getItem('carnage-ui-theme');
+    if (theme) setUiTheme(theme);
+  } catch {}
 }
 
 // ── HEX-BOARD SHAPE (cube coordinates) ───────────────────
@@ -4608,6 +4623,7 @@ function initRosterDragToBoard() {
 init();
 initGridInteraction();
 initRosterDragToBoard();
+restoreUiPreferences();
 </script>
 
 <script type="module">
