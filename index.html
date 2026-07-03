@@ -2423,6 +2423,12 @@ function resolveLogType(type, pid) {
 }
 
 function entryPassesFilters(entry) {
+  // Fog-of-war: in an isolated/live view, only show entries about the viewer's
+  // own or grouped characters. This ran through the DM's manual type/pid
+  // filters below but never checked isolatedPids at all, so a player's log tab
+  // was showing every character's activity, not just their own party's.
+  if (isolatedPids && entry.pid && !isolatedPids.has(entry.pid)) return false;
+
   const isPassthrough = entry.type === 'round' || entry.type === 'system' || entry.type === 'elim';
   if (!isPassthrough) {
     if (logTypeFilter === 'pc' && entry.type !== 'player') return false;
@@ -2495,6 +2501,12 @@ function renderLog() {
 }
 
 function setLogTypeFilter(type) {
+  // Clicking an already-active PC/NPC filter toggles it back off — an
+  // alternative to hitting the separate Reset button.
+  if (logTypeFilter === type) {
+    resetLogFilters();
+    return;
+  }
   logTypeFilter = type;
   document.getElementById('ltb-pc').classList.toggle('ltb-active', type === 'pc');
   document.getElementById('ltb-all').classList.remove('ltb-active');
