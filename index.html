@@ -174,8 +174,8 @@
     background:rgba(10,10,16,0.93);border:1px solid var(--gold);border-radius:3px;
     padding:5px 9px;min-width:80px;max-width:200px;box-shadow:0 4px 18px rgba(0,0,0,.8);
     transform:translate(-50%,-110%);transition:opacity .1s;}
-  #hex-tooltip .tt-name{font-family:'Cinzel',serif;font-size:.78rem;color:var(--text-bright);font-weight:600;white-space:nowrap;}
-  #hex-tooltip .tt-team{font-size:.62rem;color:var(--text-dim);margin-top:1px;white-space:nowrap;}
+  #hex-tooltip .tt-name{font-family:'Cinzel',serif;font-size:.78rem;color:var(--text-bright);font-weight:600;white-space:normal;overflow-wrap:break-word;word-break:break-word;}
+  #hex-tooltip .tt-team{font-size:.62rem;color:var(--text-dim);margin-top:1px;white-space:normal;overflow-wrap:break-word;word-break:break-word;}
   #hex-tooltip .tt-pos{font-family:'Share Tech Mono',monospace;font-size:.55rem;color:var(--text-dim);margin-top:2px;}
   /* LOG CLICKABLE */
   .log-entry-link{display:inline-block;margin-top:3px;padding:2px 6px;border:1px solid var(--border-bright);border-radius:2px;
@@ -2836,9 +2836,23 @@ function showTooltipForHex(col, row, clientX, clientY) {
     nameEl.innerHTML = `<span style="color:${t.color}">${p.name}${p.isCaptain?' ★':''}</span>`;
     teamEl.textContent = t.name;
   } else {
+    // Multiple characters: no individual names (they overflowed the box) — a
+    // single group label instead, chosen by composition:
+    //   - all one team (PC or NPC)      -> that team's name
+    //   - 2+ different PC teams, no NPC -> "Fateweavers"
+    //   - anything else mixed with NPCs -> "Combatants"
     const teamSet = [...new Set(occ.map(id=>getParticipant(id).teamIndex))];
-    nameEl.innerHTML = occ.map(id=>{const p=getParticipant(id),t=teams[p.teamIndex];return `<span style="color:${t.color}">${p.name.split(' ')[0]}${p.isCaptain?' ★':''}</span>`;}).join(' · ');
-    teamEl.textContent = teamSet.length===1 ? teams[teamSet[0]].name : `${occ.length} combatants`;
+    const allPC = occ.every(id=>PLAYER_TEAM_INDICES.includes(getParticipant(id).teamIndex));
+    let label, color;
+    if (teamSet.length === 1) {
+      label = teams[teamSet[0]].name; color = teams[teamSet[0]].color;
+    } else if (allPC) {
+      label = 'Fateweavers'; color = 'var(--gold-bright)';
+    } else {
+      label = 'Combatants'; color = 'var(--text-bright)';
+    }
+    nameEl.innerHTML = `<span style="color:${color}">${label}</span>`;
+    teamEl.textContent = `${occ.length} characters`;
   }
   posEl.textContent = `(${col}, ${row})`;
   const gaRect = document.querySelector('.grid-area').getBoundingClientRect();
