@@ -1008,6 +1008,7 @@ function init() {
     teams.push({name:td.name, color:TEAM_COLORS[ti], memberIds});
   });
   initCellStates();
+  applyStoredTileNotes();
   buildHexGrid();
   renderSidebar();
   updateStats();
@@ -1021,6 +1022,30 @@ function initCellStates() {
   for (let c=0;c<GRID_COLS;c++) for (let r=0;r<GRID_ROWS;r++)
     if (isValidCell(c,r))
       cellStates[`${c},${r}`] = {state:'empty', events:[], occupants:[]};
+}
+
+// Tile notes are persisted to localStorage (this device/browser) so they
+// survive a page reload/exit — same reasoning as the UI prefs above: DM notes
+// also sync via Firestore, but a player's own notes never do, so without this
+// they'd vanish the moment the tab closed.
+function loadStoredTileNotes() {
+  try { return JSON.parse(localStorage.getItem('carnage-tile-notes') || '{}'); } catch { return {}; }
+}
+function saveTileNote(key, note) {
+  try {
+    const notes = loadStoredTileNotes();
+    if (note) notes[key] = note; else delete notes[key];
+    localStorage.setItem('carnage-tile-notes', JSON.stringify(notes));
+  } catch {}
+}
+function clearStoredTileNotes() {
+  try { localStorage.removeItem('carnage-tile-notes'); } catch {}
+}
+function applyStoredTileNotes() {
+  const notes = loadStoredTileNotes();
+  Object.entries(notes).forEach(([key, note]) => {
+    if (cellStates[key]) cellStates[key].note = note;
+  });
 }
 
 // ── BUILD SVG ─────────────────────────────────────────────
@@ -2893,8 +2918,9 @@ function resetGame() {
   isolatedPids = null;
   document.getElementById('isolation-badge').style.display = 'none';
 
-  // Reset cell states
+  // Reset cell states — a brand new game shouldn't resurrect notes from the last one
   initCellStates();
+  clearStoredTileNotes();
 
   // Reset game phase
   gamePhase = 'setup';
@@ -3336,6 +3362,7 @@ function showCtxMenu(col, row, e) {
     const text = prompt(`Note for (${col},${row}):`, cs.note || '');
     if (text === null) return;
     cs.note = text.trim();
+    saveTileNote(key, cs.note);
     renderHexGrid();
   };
   menu.appendChild(noteOpt);
@@ -3348,6 +3375,7 @@ function showCtxMenu(col, row, e) {
     clearOpt.onmouseleave = () => clearOpt.style.background='';
     clearOpt.onclick = () => {
       cs.note = '';
+      saveTileNote(key, '');
       hideCtxMenu();
       renderHexGrid();
     };
@@ -3455,12 +3483,14 @@ function applyDMSave(data) {
 
   // Restore cell states (migrate old saves: isDeath events move to casualties)
   initCellStates();
+  applyStoredTileNotes();
   Object.entries(data.cellStates || {}).forEach(([key, cs]) => {
     if (!cellStates[key]) return;
     const events = (cs.events||[]).filter(e => !e.isDeath);
     const migratedCas = (cs.events||[]).filter(e => e.isDeath);
     const casualties = [...migratedCas, ...(cs.casualties||[])];
-    cellStates[key] = {state:cs.state, events, occupants:cs.occupants||[], ...(casualties.length ? {casualties} : {}), ...(cs.note ? {note:cs.note} : {})};
+    const note = cs.note || cellStates[key].note;
+    cellStates[key] = {state:cs.state, events, occupants:cs.occupants||[], ...(casualties.length ? {casualties} : {}), ...(note ? {note} : {})};
   });
 
   // Restore log entries
@@ -3715,6 +3745,7 @@ function showCharacterPicker(multiData) {
 function applyMultiPlayerProgress(multiData, entries) {
   participants.forEach(p => { p.position = null; p.alive = false; p.visitedCells = []; });
   initCellStates();
+  applyStoredTileNotes();
   logEntries = []; logTypeFilter = 'all'; logPidFilters = null;
 
   const pids = [];
@@ -3779,6 +3810,7 @@ function returnToTitle() {
   // Clear player state
   participants.forEach(p => { p.position = null; p.alive = true; p.visitedCells = []; });
   initCellStates();
+  applyStoredTileNotes();
   isolatedPids = null;
   selectedParticipant = null; selectedForcedGroup = null; selectedCell = null;
   gamePhase = 'setup'; round = 0; logTick = 0;
@@ -3809,6 +3841,7 @@ function applyPlayerProgress(data) {
   // Wipe all participants so only this character is visible
   participants.forEach(p => { p.position = null; p.alive = false; p.visitedCells = []; });
   initCellStates();
+  applyStoredTileNotes();
 
   const p = getParticipant(ch.pid);
   if (!p) { alert('Character not found in roster. Is this the correct version of the app?'); return; }
@@ -4578,18 +4611,17 @@ function applyLiveGameState(data, myPids, myName) {
     });
 
     // Players can't write to Firestore, so any note they add locally lives only
-    // in this tab. Preserve it across incoming snapshots unless the DM has
-    // published their own note for that same cell (DM's note always wins).
-    const localNotes = {};
-    Object.entries(cellStates).forEach(([k,v]) => { if (v.note) localNotes[k] = v.note; });
-
+    // in this tab, persisted to localStorage so it survives a reload. Preserve
+    // it across incoming snapshots unless the DM has published their own note
+    // for that same cell (DM's note always wins).
     initCellStates();
+    applyStoredTileNotes();
     Object.entries(data.cellStates || {}).forEach(([key, cs]) => {
       if (!cellStates[key]) return;
       const events = (cs.events||[]).filter(e => !e.isDeath);
       const migratedCas = (cs.events||[]).filter(e => e.isDeath);
       const casualties = [...migratedCas, ...(cs.casualties||[])];
-      const note = cs.note || localNotes[key];
+      const note = cs.note || cellStates[key].note;
       cellStates[key] = {state:cs.state, events, occupants:cs.occupants||[], ...(casualties.length ? {casualties} : {}), ...(note ? {note} : {})};
     });
 
