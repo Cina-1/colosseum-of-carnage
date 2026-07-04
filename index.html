@@ -1470,6 +1470,19 @@ function randomizePlacements() {
 // lighter cream/grey treatment in light mode instead of near-black.
 function isLightTheme() { return document.body.getAttribute('data-theme') === 'light'; }
 
+// Small marker drawn on any tile with a note, including ones still hidden by
+// fog — it's a placed reminder ("watch this spot"), not a reveal, so it draws
+// on top regardless of what the fog branch above already set for fill/stroke.
+function drawNoteIcon(svg, x, y) {
+  const ng = document.createElementNS('http://www.w3.org/2000/svg','g');
+  ng.classList.add('hex-overlay'); ng.style.pointerEvents='none';
+  const nt = document.createElementNS('http://www.w3.org/2000/svg','text');
+  nt.setAttribute('x',x+11); nt.setAttribute('y',y-9);
+  nt.setAttribute('text-anchor','middle'); nt.setAttribute('dominant-baseline','central');
+  nt.setAttribute('font-size','7');
+  nt.textContent='📝'; ng.appendChild(nt); svg.appendChild(ng);
+}
+
 function renderHexGrid() {
   const svg = document.getElementById('hex-svg');
   if (!svg) return;
@@ -1518,12 +1531,17 @@ function renderHexGrid() {
       const occ=cs.occupants.filter(id=>{const p=getParticipant(id);return p&&p.alive;});
 
       const cellHasDeath = !!(cs.casualties && cs.casualties.length > 0);
+      // A note can be added on any tile, visited or not — it's a player-placed
+      // marker ("watch this spot"), not a reveal, so it still draws through fog
+      // below (icon only; the fog fill/stroke color itself never changes).
+      const hasNote = !!(cs.note && cs.note.trim());
 
       // Isolation: hide cells the isolated character(s) never visited (death tiles always show)
       if (isoVisited && !isoVisited.has(key) && !cellHasDeath) {
         fill.setAttribute('fill', light ? '#cabe94' : '#1a1a22');
         border.setAttribute('stroke', light ? '#9c8860' : '#14141c');
         border.setAttribute('stroke-width','0.5');
+        if (hasNote) drawNoteIcon(svg, x, y);
         continue;
       }
 
@@ -1532,6 +1550,7 @@ function renderHexGrid() {
         fill.setAttribute('fill', light ? '#c0b284' : '#0d0d14');
         border.setAttribute('stroke', light ? '#8f7a52' : '#0a0a11');
         border.setAttribute('stroke-width','0.5');
+        if (hasNote) drawNoteIcon(svg, x, y);
         continue;
       }
 
@@ -1641,11 +1660,9 @@ function renderHexGrid() {
         strokeColor = light ? 'rgba(150,55,55,0.6)' : 'rgba(100,55,55,0.45)';
         strokeW='1';
       }
-      // Tile notes (visible to players, subject to the fog-of-war gate/continue
-      // statements above): neutral lavender tint on otherwise-blank tiles so an
+      // Tile notes: neutral lavender tint on otherwise-blank visited tiles so an
       // annotated cell stands out; occupied tiles keep team coloring and just
       // get the icon below instead, so token/fog info is never hidden.
-      const hasNote = !!(cs.note && cs.note.trim());
       if (hasNote && occRender.length === 0 && !hasDeathMark) {
         fillColor = light ? 'rgba(140,110,175,0.32)' : 'rgba(95,70,135,0.4)';
         strokeColor = light ? 'rgba(105,75,150,0.7)' : 'rgba(160,125,205,0.65)';
@@ -1666,15 +1683,7 @@ function renderHexGrid() {
         sk.textContent='💀'; dm.appendChild(sk); svg.appendChild(dm);
       }
 
-      if (hasNote) {
-        const ng = document.createElementNS('http://www.w3.org/2000/svg','g');
-        ng.classList.add('hex-overlay'); ng.style.pointerEvents='none';
-        const nt = document.createElementNS('http://www.w3.org/2000/svg','text');
-        nt.setAttribute('x',x+11); nt.setAttribute('y',y-9);
-        nt.setAttribute('text-anchor','middle'); nt.setAttribute('dominant-baseline','central');
-        nt.setAttribute('font-size','7');
-        nt.textContent='📝'; ng.appendChild(nt); svg.appendChild(ng);
-      }
+      if (hasNote) drawNoteIcon(svg, x, y);
 
       // Phantom token: ghost circle on starting tiles once game has begun
       if (gamePhase === 'running' && !isoVisited && cs.state === 'starting') {
@@ -2024,6 +2033,10 @@ function renderCellInfo(col,row) {
   }
   if (isInFog) {
     let h = `<div class="cell-info-coord">(${col}, ${row})</div>`;
+    if (cs.note) {
+      h += `<div class="cell-info-section"><div class="cell-info-label">Note</div>
+        <div style="font-size:.65rem;color:#c8a0e8;margin-top:3px;line-height:1.4;white-space:pre-wrap;">${cs.note}</div></div>`;
+    }
     const deathEvs = cs.casualties || [];
     if (deathEvs.length > 0) {
       h += `<div class="cell-info-section"><div class="cell-info-label">Casualties (${deathEvs.length})</div>`;
@@ -3172,17 +3185,14 @@ function initGridInteraction() {
   });
 
   // Right-click unstack menu (DM: move/select options + notes). Players get a
-  // notes-only version of the same menu, still gated by their own fog of war —
-  // they can't annotate a tile they haven't discovered.
+  // notes-only version of the same menu, and can mark ANY tile — including
+  // ones still hidden by fog — since a note is a player-placed reminder about
+  // where they might gain intel, not a reveal of what's actually there.
   const svg = document.getElementById('hex-svg');
   svg.addEventListener('contextmenu', e => {
     e.preventDefault();
     const hex = hexFromElement(e.target);
     if (!hex) return;
-    if (appMode === 'player') {
-      const key = `${hex.col},${hex.row}`;
-      if (isolatedPids && !getVisitedCellSet([...isolatedPids]).has(key)) return;
-    }
     showCtxMenu(hex.col, hex.row, e);
   });
 
