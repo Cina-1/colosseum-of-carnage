@@ -129,8 +129,7 @@
   .grid-scroll::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px;}
   /* CELL INFO */
   .cell-info-panel{width:210px;background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;overflow:hidden;}
-  .cell-info-header{padding:9px 11px;border-bottom:1px solid var(--border);font-family:'Cinzel',serif;font-size:.62rem;letter-spacing:1px;color:var(--gold);text-transform:uppercase;display:flex;align-items:center;justify-content:space-between;gap:6px;}
-  .cell-info-header .btn{text-transform:none;letter-spacing:0;font-family:'Crimson Text',serif;font-size:.58rem;padding:2px 7px;}
+  .cell-info-header{padding:9px 11px;border-bottom:1px solid var(--border);font-family:'Cinzel',serif;font-size:.62rem;letter-spacing:1px;color:var(--gold);text-transform:uppercase;}
   .cell-info-body{flex:1;overflow-y:auto;padding:9px 11px;}
   .cell-info-body::-webkit-scrollbar{width:4px;}
   .cell-info-body::-webkit-scrollbar-thumb{background:var(--border);}
@@ -295,6 +294,7 @@
         <button class="btn btn-danger dm-only" onclick="confirmReset()">↺ Reset</button>
         <button class="btn" id="btn-back-to-title" style="display:none;" onclick="returnToTitle()">← Title</button>
         <button class="btn" id="btn-live-refresh" style="display:none;" onclick="refreshLiveView()" title="Manually re-fetch the latest game state">🔄 Refresh</button>
+        <button class="btn" onclick="clearAllTileNotes()" title="Clear every tile note (this device only)">🗑 Clear All Notes</button>
         <div style="display:flex;align-items:center;gap:4px;margin-left:auto;">
           <button class="btn" onclick="adjustZoom(-0.15)" title="Zoom Out">−</button>
           <span id="zoom-label" style="font-family:'Share Tech Mono',monospace;font-size:.6rem;color:var(--text-dim);min-width:36px;text-align:center;">100%</span>
@@ -308,9 +308,7 @@
     <div id="hex-tooltip"><div class="tt-name"></div><div class="tt-team"></div><div class="tt-pos"></div></div>
   </div>
   <div class="cell-info-panel">
-    <div class="cell-info-header"><span>Cell Inspector</span>
-      <button class="btn" onclick="clearAllTileNotes()" title="Clear every tile note (this device only)">🗑 Clear All Notes</button>
-    </div>
+    <div class="cell-info-header">Cell Inspector</div>
     <div class="cell-info-body" id="cell-info-body"><p class="cell-info-empty">Click a hex to inspect it.</p></div>
   </div>
 </div>
