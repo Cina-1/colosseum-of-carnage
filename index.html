@@ -1477,9 +1477,9 @@ function drawNoteIcon(svg, x, y) {
   const ng = document.createElementNS('http://www.w3.org/2000/svg','g');
   ng.classList.add('hex-overlay'); ng.style.pointerEvents='none';
   const nt = document.createElementNS('http://www.w3.org/2000/svg','text');
-  nt.setAttribute('x',x+11); nt.setAttribute('y',y-9);
+  nt.setAttribute('x',x); nt.setAttribute('y',y);
   nt.setAttribute('text-anchor','middle'); nt.setAttribute('dominant-baseline','central');
-  nt.setAttribute('font-size','7');
+  nt.setAttribute('font-size','9');
   nt.textContent='📝'; ng.appendChild(nt); svg.appendChild(ng);
 }
 
@@ -1538,8 +1538,13 @@ function renderHexGrid() {
 
       // Isolation: hide cells the isolated character(s) never visited (death tiles always show)
       if (isoVisited && !isoVisited.has(key) && !cellHasDeath) {
-        fill.setAttribute('fill', light ? '#cabe94' : '#1a1a22');
-        border.setAttribute('stroke', light ? '#9c8860' : '#14141c');
+        if (hasNote) {
+          fill.setAttribute('fill', light ? 'rgba(140,110,175,0.5)' : 'rgba(95,70,135,0.55)');
+          border.setAttribute('stroke', light ? 'rgba(105,75,150,0.8)' : 'rgba(160,125,205,0.75)');
+        } else {
+          fill.setAttribute('fill', light ? '#cabe94' : '#1a1a22');
+          border.setAttribute('stroke', light ? '#9c8860' : '#14141c');
+        }
         border.setAttribute('stroke-width','0.5');
         if (hasNote) drawNoteIcon(svg, x, y);
         continue;
@@ -1547,8 +1552,13 @@ function renderHexGrid() {
 
       // Pid filter: absolute fog of war (death tiles always show)
       if (pidVisited && !pidVisited.has(key) && !cellHasDeath) {
-        fill.setAttribute('fill', light ? '#c0b284' : '#0d0d14');
-        border.setAttribute('stroke', light ? '#8f7a52' : '#0a0a11');
+        if (hasNote) {
+          fill.setAttribute('fill', light ? 'rgba(140,110,175,0.5)' : 'rgba(95,70,135,0.55)');
+          border.setAttribute('stroke', light ? 'rgba(105,75,150,0.8)' : 'rgba(160,125,205,0.75)');
+        } else {
+          fill.setAttribute('fill', light ? '#c0b284' : '#0d0d14');
+          border.setAttribute('stroke', light ? '#8f7a52' : '#0a0a11');
+        }
         border.setAttribute('stroke-width','0.5');
         if (hasNote) drawNoteIcon(svg, x, y);
         continue;
