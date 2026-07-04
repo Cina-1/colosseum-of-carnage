@@ -1920,10 +1920,16 @@ function renderSidebar() {
     ...restIndices.filter(ti=>aliveCountOf(ti)>0),
     ...restIndices.filter(ti=>aliveCountOf(ti)===0),
   ];
+  // Players only ever see their own characters plus anyone the DM has them
+  // currently grouped with (activePids, via isolatedPids) — never the rest of
+  // their team, so a teammate's position/alive-or-dead status never leaks.
+  const restrictToOwn = appMode === 'player' && !!activePids;
   order.forEach(ti=>{
     if (activeTeamSet && !activeTeamSet.has(ti)) return;
     const team=teams[ti];
-    const aliveCount=participants.filter(p=>p.teamIndex===ti&&p.alive).length;
+    const visibleMemberIds = restrictToOwn ? team.memberIds.filter(pid=>activePids.has(pid)) : team.memberIds;
+    if (restrictToOwn && visibleMemberIds.length === 0) return;
+    const aliveCount=participants.filter(p=>visibleMemberIds.includes(p.id)&&p.alive).length;
     const card=document.createElement('div');
     card.className=`team-card${aliveCount===0?' eliminated-team':''}`;
     card.style.borderLeft=`3px solid ${team.color}`;
@@ -1933,13 +1939,13 @@ function renderSidebar() {
     card.innerHTML=`<div class="team-header" style="cursor:pointer;" onclick="toggleTeamCollapse(${ti},event)">
       <div class="team-swatch" style="background:${team.color};box-shadow:0 0 4px ${team.color}66;"></div>
       <div class="team-name">${team.name}${isPinned?'<span style="color:var(--text-dim);font-size:.45rem;margin-left:3px;">★</span>':''}</div>
-      <div class="team-alive-count">${aliveCount}/${team.memberIds.length}</div>
+      <div class="team-alive-count">${aliveCount}/${visibleMemberIds.length}</div>
       <button class="team-collapse-btn" onclick="toggleTeamCollapse(${ti},event)">${isCollapsed?'▸':'▾'}</button>
     </div>`;
     const membersDiv=document.createElement('div');
     membersDiv.className='team-members';
     if (isCollapsed) membersDiv.style.display='none';
-    team.memberIds.forEach(pid=>{
+    visibleMemberIds.forEach(pid=>{
       const p=getParticipant(pid);
       if (!p) return;
       const posText=p.position?`(${p.position.col},${p.position.row})`:'—';
