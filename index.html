@@ -1641,6 +1641,15 @@ function renderHexGrid() {
         strokeColor = light ? 'rgba(150,55,55,0.6)' : 'rgba(100,55,55,0.45)';
         strokeW='1';
       }
+      // DM notes: neutral lavender tint on otherwise-blank tiles so a scouted/
+      // annotated cell stands out; occupied tiles keep team coloring and just
+      // get the icon below instead, so token/fog info is never hidden.
+      const hasNote = !!(cs.note && cs.note.trim());
+      if (hasNote && occRender.length === 0 && !hasDeathMark) {
+        fillColor = light ? 'rgba(140,110,175,0.32)' : 'rgba(95,70,135,0.4)';
+        strokeColor = light ? 'rgba(105,75,150,0.7)' : 'rgba(160,125,205,0.65)';
+        strokeW='1.2';
+      }
       fill.setAttribute('fill',fillColor);
       border.setAttribute('stroke',strokeColor);
       border.setAttribute('stroke-width',strokeW);
@@ -1654,6 +1663,16 @@ function renderHexGrid() {
         sk.setAttribute('font-size', occRender.length>0 ? '5' : '9');
         sk.setAttribute('fill', occRender.length>0 ? 'rgba(160,80,80,0.4)' : 'rgba(160,80,80,0.75)');
         sk.textContent='💀'; dm.appendChild(sk); svg.appendChild(dm);
+      }
+
+      if (hasNote) {
+        const ng = document.createElementNS('http://www.w3.org/2000/svg','g');
+        ng.classList.add('hex-overlay'); ng.style.pointerEvents='none';
+        const nt = document.createElementNS('http://www.w3.org/2000/svg','text');
+        nt.setAttribute('x',x+11); nt.setAttribute('y',y-9);
+        nt.setAttribute('text-anchor','middle'); nt.setAttribute('dominant-baseline','central');
+        nt.setAttribute('font-size','7');
+        nt.textContent='📝'; ng.appendChild(nt); svg.appendChild(ng);
       }
 
       // Phantom token: ghost circle on starting tiles once game has begun
@@ -2030,6 +2049,10 @@ function renderCellInfo(col,row) {
   let html = isFinalZone
     ? `<div style="font-family:'Cinzel',serif;font-size:.78rem;color:var(--gold-bright);letter-spacing:2px;text-transform:uppercase;margin-bottom:7px;">The Final Zone</div>`
     : `<div class="cell-info-coord">(${col}, ${row})</div>`;
+  if (appMode !== 'player' && cs.note) {
+    html+=`<div class="cell-info-section"><div class="cell-info-label">DM Note</div>
+      <div style="font-size:.65rem;color:#c8a0e8;margin-top:3px;line-height:1.4;white-space:pre-wrap;">${cs.note}</div></div>`;
+  }
   html+=`<div class="cell-info-section"><div class="cell-info-label">Occupants</div>`;
   if (occ.length>0) {
     occ.forEach(pid=>{
@@ -3182,10 +3205,34 @@ function initGridInteraction() {
 // (selects and moves only that one character, never their teammates).
 function showCtxMenu(col, row, e) {
   hideCtxMenu();
-  const occ = cellStates[`${col},${row}`].occupants.filter(id=>getParticipant(id)?.alive);
-  if (occ.length <= 1) {
-    if (occ.length===1) { selectParticipant(occ[0]); selectedForcedGroup = [occ[0]]; }
-    return;
+  const key = `${col},${row}`;
+  const cs = cellStates[key];
+  const occ = cs.occupants.filter(id=>getParticipant(id)?.alive);
+
+  const menu = document.createElement('div');
+  menu.style.cssText = `position:fixed;z-index:500;background:#13131a;border:1px solid #b8922a;
+    border-radius:3px;padding:5px 0;box-shadow:0 4px 20px rgba(0,0,0,0.85);
+    left:${Math.min(e.clientX,window.innerWidth-180)}px;
+    top:${Math.min(e.clientY,window.innerHeight-260)}px;min-width:165px;`;
+  const hdr = document.createElement('div');
+  hdr.style.cssText='padding:4px 10px 6px;font-family:Cinzel,serif;font-size:.5rem;color:#6a6475;letter-spacing:1px;text-transform:uppercase;border-bottom:1px solid #2a2a3a;margin-bottom:3px;';
+  hdr.textContent=`(${col},${row})`;
+  menu.appendChild(hdr);
+
+  if (occ.length === 1) {
+    const pid = occ[0];
+    const p = getParticipant(pid);
+    const moveOpt = document.createElement('div');
+    moveOpt.style.cssText = 'padding:5px 10px;cursor:pointer;font-size:.66rem;color:#c8c0b0;';
+    moveOpt.textContent = `Select ${p.name}`;
+    moveOpt.onmouseenter = () => moveOpt.style.background='rgba(184,146,42,0.1)';
+    moveOpt.onmouseleave = () => moveOpt.style.background='';
+    moveOpt.onclick = () => {
+      selectParticipant(pid);
+      selectedForcedGroup = [pid];
+      hideCtxMenu();
+    };
+    menu.appendChild(moveOpt);
   }
 
   const byTeam = new Map();
@@ -3195,17 +3242,7 @@ function showCtxMenu(col, row, e) {
     byTeam.get(teamIndex).push(pid);
   });
 
-  const menu = document.createElement('div');
-  menu.style.cssText = `position:fixed;z-index:500;background:#13131a;border:1px solid #b8922a;
-    border-radius:3px;padding:5px 0;box-shadow:0 4px 20px rgba(0,0,0,0.85);
-    left:${Math.min(e.clientX,window.innerWidth-180)}px;
-    top:${Math.min(e.clientY,window.innerHeight-260)}px;min-width:165px;`;
-  const hdr = document.createElement('div');
-  hdr.style.cssText='padding:4px 10px 6px;font-family:Cinzel,serif;font-size:.5rem;color:#6a6475;letter-spacing:1px;text-transform:uppercase;border-bottom:1px solid #2a2a3a;margin-bottom:3px;';
-  hdr.textContent=`(${col},${row}) — Select to Move`;
-  menu.appendChild(hdr);
-
-  [...byTeam.entries()].forEach(([teamIndex, pids]) => {
+  if (occ.length > 1) [...byTeam.entries()].forEach(([teamIndex, pids]) => {
     const team = teams[teamIndex];
     const item = document.createElement('div');
     item.style.cssText = 'position:relative;padding:5px 10px;cursor:pointer;font-size:.68rem;color:#c8c0b0;display:flex;align-items:center;gap:7px;transition:background .1s;';
@@ -3253,6 +3290,36 @@ function showCtxMenu(col, row, e) {
     menu.appendChild(item);
   });
 
+  const noteOpt = document.createElement('div');
+  noteOpt.style.cssText = 'padding:5px 10px;cursor:pointer;font-size:.66rem;color:#c8a0e8;border-top:1px solid #2a2a3a;margin-top:3px;';
+  noteOpt.textContent = cs.note ? '📝 Edit Note' : '📝 Add Note';
+  noteOpt.onmouseenter = () => noteOpt.style.background='rgba(184,146,42,0.1)';
+  noteOpt.onmouseleave = () => noteOpt.style.background='';
+  noteOpt.onclick = () => {
+    hideCtxMenu();
+    // DM-only annotation — never published to players (see buildLiveStateData's
+    // explicit field whitelist), so it's safe for hidden scouting-style intel.
+    const text = prompt(`DM note for (${col},${row}) — never shown to players:`, cs.note || '');
+    if (text === null) return;
+    cs.note = text.trim();
+    renderHexGrid();
+  };
+  menu.appendChild(noteOpt);
+
+  if (cs.note) {
+    const clearOpt = document.createElement('div');
+    clearOpt.style.cssText = 'padding:5px 10px;cursor:pointer;font-size:.66rem;color:#e88888;';
+    clearOpt.textContent = '🗑 Remove Note';
+    clearOpt.onmouseenter = () => clearOpt.style.background='rgba(184,146,42,0.1)';
+    clearOpt.onmouseleave = () => clearOpt.style.background='';
+    clearOpt.onclick = () => {
+      cs.note = '';
+      hideCtxMenu();
+      renderHexGrid();
+    };
+    menu.appendChild(clearOpt);
+  }
+
   document.body.appendChild(menu);
   ctxMenu=menu;
 }
@@ -3290,7 +3357,7 @@ function buildDMSaveData() {
     logEntries: [...logEntries],
     participants: participants.map(p => ({...p, visitedCells: [...(p.visitedCells||[])]})),
     cellStates: Object.fromEntries(
-      Object.entries(cellStates).map(([k,v]) => [k, {state:v.state, events:[...v.events], occupants:[...v.occupants], casualties:[...(v.casualties||[])]}])
+      Object.entries(cellStates).map(([k,v]) => [k, {state:v.state, events:[...v.events], occupants:[...v.occupants], casualties:[...(v.casualties||[])], ...(v.note ? {note:v.note} : {})}])
     )
   };
 }
@@ -3357,7 +3424,7 @@ function applyDMSave(data) {
     const events = (cs.events||[]).filter(e => !e.isDeath);
     const migratedCas = (cs.events||[]).filter(e => e.isDeath);
     const casualties = [...migratedCas, ...(cs.casualties||[])];
-    cellStates[key] = {state:cs.state, events, occupants:cs.occupants||[], ...(casualties.length ? {casualties} : {})};
+    cellStates[key] = {state:cs.state, events, occupants:cs.occupants||[], ...(casualties.length ? {casualties} : {}), ...(cs.note ? {note:cs.note} : {})};
   });
 
   // Restore log entries
