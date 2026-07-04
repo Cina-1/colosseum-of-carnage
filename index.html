@@ -1947,6 +1947,7 @@ function renderSidebar() {
         // Click just focuses the camera on them — movement is drag-only now
         // (drag this row directly onto the board; see initRosterDragToBoard).
         row.addEventListener('click',e=>{
+          if (appMode === 'player') return;
           if (e.target.classList.contains('elim-btn')) return;
           if (e.target.classList.contains('hp-adj-btn')) return;
           if (e.target.classList.contains('rest-btn')) return;
@@ -2367,6 +2368,7 @@ function startGame() {
   setStatus('The Games have begun. Select a participant and move them.');
   addLog('⚔ The Games Have Begun — Round 1', 'round');
   updateStats();
+  autoPublishLiveUpdate();
 }
 
 function nextRound() {
