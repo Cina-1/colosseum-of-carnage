@@ -1641,7 +1641,8 @@ function renderHexGrid() {
         strokeColor = light ? 'rgba(150,55,55,0.6)' : 'rgba(100,55,55,0.45)';
         strokeW='1';
       }
-      // DM notes: neutral lavender tint on otherwise-blank tiles so a scouted/
+      // Tile notes (visible to players, subject to the fog-of-war gate/continue
+      // statements above): neutral lavender tint on otherwise-blank tiles so an
       // annotated cell stands out; occupied tiles keep team coloring and just
       // get the icon below instead, so token/fog info is never hidden.
       const hasNote = !!(cs.note && cs.note.trim());
@@ -2049,8 +2050,8 @@ function renderCellInfo(col,row) {
   let html = isFinalZone
     ? `<div style="font-family:'Cinzel',serif;font-size:.78rem;color:var(--gold-bright);letter-spacing:2px;text-transform:uppercase;margin-bottom:7px;">The Final Zone</div>`
     : `<div class="cell-info-coord">(${col}, ${row})</div>`;
-  if (appMode !== 'player' && cs.note) {
-    html+=`<div class="cell-info-section"><div class="cell-info-label">DM Note</div>
+  if (cs.note) {
+    html+=`<div class="cell-info-section"><div class="cell-info-label">Note</div>
       <div style="font-size:.65rem;color:#c8a0e8;margin-top:3px;line-height:1.4;white-space:pre-wrap;">${cs.note}</div></div>`;
   }
   html+=`<div class="cell-info-section"><div class="cell-info-label">Occupants</div>`;
@@ -3297,9 +3298,10 @@ function showCtxMenu(col, row, e) {
   noteOpt.onmouseleave = () => noteOpt.style.background='';
   noteOpt.onclick = () => {
     hideCtxMenu();
-    // DM-only annotation — never published to players (see buildLiveStateData's
-    // explicit field whitelist), so it's safe for hidden scouting-style intel.
-    const text = prompt(`DM note for (${col},${row}) — never shown to players:`, cs.note || '');
+    // Visible to players once published — but only on tiles that already pass
+    // the normal fog-of-war gate, same as occupants/events. Adding a note never
+    // reveals a tile early; it just annotates it once it's already visible.
+    const text = prompt(`Note for (${col},${row}) — visible to players (subject to fog of war):`, cs.note || '');
     if (text === null) return;
     cs.note = text.trim();
     renderHexGrid();
@@ -4319,7 +4321,7 @@ function buildLiveStateData() {
     logEntries: [...logEntries],
     participants: participants.map(p => ({...p, visitedCells: [...(p.visitedCells||[])]})),
     cellStates: Object.fromEntries(
-      Object.entries(cellStates).map(([k,v]) => [k, {state:v.state, events:[...v.events], occupants:[...v.occupants], casualties:[...(v.casualties||[])]}])
+      Object.entries(cellStates).map(([k,v]) => [k, {state:v.state, events:[...v.events], occupants:[...v.occupants], casualties:[...(v.casualties||[])], ...(v.note ? {note:v.note} : {})}])
     ),
     parties: liveSyncGroups,
   };
@@ -4541,7 +4543,7 @@ function applyLiveGameState(data, myPids, myName) {
       const events = (cs.events||[]).filter(e => !e.isDeath);
       const migratedCas = (cs.events||[]).filter(e => e.isDeath);
       const casualties = [...migratedCas, ...(cs.casualties||[])];
-      cellStates[key] = {state:cs.state, events, occupants:cs.occupants||[], ...(casualties.length ? {casualties} : {})};
+      cellStates[key] = {state:cs.state, events, occupants:cs.occupants||[], ...(casualties.length ? {casualties} : {}), ...(cs.note ? {note:cs.note} : {})};
     });
 
     logEntries = data.logEntries ? [...data.logEntries] : [];
