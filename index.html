@@ -2675,6 +2675,7 @@ function toggleZonePause() {
   }
   setStatus(zonePaused ? `Zone paused at its Round ${zoneFreezeRound} size.` : 'Zone resumed — shrinking continues.');
   renderHexGrid();
+  autoPublishLiveUpdate();
 }
 
 function toggleTeamCollapse(ti, event) {
@@ -3355,7 +3356,7 @@ function buildDMSaveData() {
   return {
     type: 'dm-save', version: 1,
     savedAt: new Date().toISOString(),
-    round, gamePhase, logTick,
+    round, gamePhase, logTick, zonePaused, zoneFreezeRound,
     logEntries: [...logEntries],
     participants: participants.map(p => ({...p, visitedCells: [...(p.visitedCells||[])]})),
     cellStates: Object.fromEntries(
@@ -3408,6 +3409,8 @@ function applyDMSave(data) {
   round = data.round || 0;
   gamePhase = data.gamePhase || 'setup';
   logTick = data.logTick || 0;
+  zonePaused = data.zonePaused || false;
+  zoneFreezeRound = data.zoneFreezeRound != null ? data.zoneFreezeRound : null;
 
   // Restore participant state
   (data.participants || []).forEach(saved => {
@@ -3442,6 +3445,10 @@ function applyDMSave(data) {
   updatePhaseButtonVisibility();
   npcProcessedThisRound.clear();
   document.getElementById('btn-start').style.display = 'none';
+  const zonePauseBtn = document.getElementById('btn-zone-pause');
+  zonePauseBtn.textContent = zonePaused ? '▶ Resume Zone' : '⏸ Pause Zone';
+  zonePauseBtn.style.borderColor = zonePaused ? 'var(--gold)' : '';
+  zonePauseBtn.style.color = zonePaused ? 'var(--gold)' : '';
   clearAllLogFilters();
   selectedParticipant = null; selectedForcedGroup = null; selectedCell = null;
 
@@ -4317,7 +4324,7 @@ function buildLiveStateData() {
   return {
     type: 'live-game-state', version: 1,
     updatedAt: new Date().toISOString(),
-    round, gamePhase, logTick,
+    round, gamePhase, logTick, zonePaused, zoneFreezeRound,
     logEntries: [...logEntries],
     participants: participants.map(p => ({...p, visitedCells: [...(p.visitedCells||[])]})),
     cellStates: Object.fromEntries(
@@ -4527,6 +4534,8 @@ function applyLiveGameState(data, myPids, myName) {
     round = data.round || 0;
     gamePhase = data.gamePhase || 'setup';
     logTick = data.logTick || 0;
+    zonePaused = data.zonePaused || false;
+    zoneFreezeRound = data.zoneFreezeRound != null ? data.zoneFreezeRound : null;
 
     (data.participants || []).forEach(saved => {
       const p = getParticipant(saved.id);
