@@ -129,7 +129,8 @@
   .grid-scroll::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px;}
   /* CELL INFO */
   .cell-info-panel{width:210px;background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;overflow:hidden;}
-  .cell-info-header{padding:9px 11px;border-bottom:1px solid var(--border);font-family:'Cinzel',serif;font-size:.62rem;letter-spacing:1px;color:var(--gold);text-transform:uppercase;}
+  .cell-info-header{padding:9px 11px;border-bottom:1px solid var(--border);font-family:'Cinzel',serif;font-size:.62rem;letter-spacing:1px;color:var(--gold);text-transform:uppercase;display:flex;align-items:center;justify-content:space-between;gap:6px;}
+  .cell-info-header .btn{text-transform:none;letter-spacing:0;font-family:'Crimson Text',serif;font-size:.58rem;padding:2px 7px;}
   .cell-info-body{flex:1;overflow-y:auto;padding:9px 11px;}
   .cell-info-body::-webkit-scrollbar{width:4px;}
   .cell-info-body::-webkit-scrollbar-thumb{background:var(--border);}
@@ -307,7 +308,9 @@
     <div id="hex-tooltip"><div class="tt-name"></div><div class="tt-team"></div><div class="tt-pos"></div></div>
   </div>
   <div class="cell-info-panel">
-    <div class="cell-info-header">Cell Inspector</div>
+    <div class="cell-info-header"><span>Cell Inspector</span>
+      <button class="btn" onclick="clearAllTileNotes()" title="Clear every tile note (this device only)">🗑 Clear All Notes</button>
+    </div>
     <div class="cell-info-body" id="cell-info-body"><p class="cell-info-empty">Click a hex to inspect it.</p></div>
   </div>
 </div>
@@ -1046,6 +1049,29 @@ function applyStoredTileNotes() {
   Object.entries(notes).forEach(([key, note]) => {
     if (cellStates[key]) cellStates[key].note = note;
   });
+}
+
+function clearTileNoteAt(col, row) {
+  const key = `${col},${row}`;
+  const cs = cellStates[key];
+  if (!cs) return;
+  cs.note = '';
+  saveTileNote(key, '');
+  renderHexGrid();
+  renderCellInfo(col, row);
+  if (appMode === 'dm') autoPublishLiveUpdate();
+}
+
+function clearAllTileNotes() {
+  const anyNotes = Object.values(cellStates).some(cs => cs.note);
+  if (!anyNotes) { setStatus('No notes to clear.'); return; }
+  if (!confirm('Clear every tile note? This cannot be undone.')) return;
+  Object.values(cellStates).forEach(cs => { if (cs.note) cs.note = ''; });
+  clearStoredTileNotes();
+  renderHexGrid();
+  if (selectedCell) renderCellInfo(selectedCell.col, selectedCell.row);
+  if (appMode === 'dm') autoPublishLiveUpdate();
+  setStatus('All tile notes cleared.');
 }
 
 // ── BUILD SVG ─────────────────────────────────────────────
@@ -2076,7 +2102,8 @@ function renderCellInfo(col,row) {
     let h = `<div class="cell-info-coord">(${col}, ${row})</div>`;
     if (cs.note) {
       h += `<div class="cell-info-section"><div class="cell-info-label">Note</div>
-        <div style="font-size:.65rem;color:#c8a0e8;margin-top:3px;line-height:1.4;white-space:pre-wrap;">${cs.note}</div></div>`;
+        <div style="font-size:.65rem;color:#c8a0e8;margin-top:3px;line-height:1.4;white-space:pre-wrap;">${cs.note}</div>
+        <button class="btn" style="margin-top:5px;font-size:.6rem;padding:2px 8px;" onclick="clearTileNoteAt(${col},${row})">🗑 Clear Note</button></div>`;
     }
     const deathEvs = cs.casualties || [];
     if (deathEvs.length > 0) {
@@ -2106,7 +2133,8 @@ function renderCellInfo(col,row) {
     : `<div class="cell-info-coord">(${col}, ${row})</div>`;
   if (cs.note) {
     html+=`<div class="cell-info-section"><div class="cell-info-label">Note</div>
-      <div style="font-size:.65rem;color:#c8a0e8;margin-top:3px;line-height:1.4;white-space:pre-wrap;">${cs.note}</div></div>`;
+      <div style="font-size:.65rem;color:#c8a0e8;margin-top:3px;line-height:1.4;white-space:pre-wrap;">${cs.note}</div>
+      <button class="btn" style="margin-top:5px;font-size:.6rem;padding:2px 8px;" onclick="clearTileNoteAt(${col},${row})">🗑 Clear Note</button></div>`;
   }
   html+=`<div class="cell-info-section"><div class="cell-info-label">Occupants</div>`;
   if (occ.length>0) {
@@ -3374,10 +3402,8 @@ function showCtxMenu(col, row, e) {
     clearOpt.onmouseenter = () => clearOpt.style.background='rgba(184,146,42,0.1)';
     clearOpt.onmouseleave = () => clearOpt.style.background='';
     clearOpt.onclick = () => {
-      cs.note = '';
-      saveTileNote(key, '');
       hideCtxMenu();
-      renderHexGrid();
+      clearTileNoteAt(col, row);
     };
     menu.appendChild(clearOpt);
   }
