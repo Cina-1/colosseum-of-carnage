@@ -3171,13 +3171,18 @@ function initGridInteraction() {
     mode=null; moved=false;
   });
 
-  // Right-click unstack menu
+  // Right-click unstack menu (DM: move/select options + notes). Players get a
+  // notes-only version of the same menu, still gated by their own fog of war —
+  // they can't annotate a tile they haven't discovered.
   const svg = document.getElementById('hex-svg');
   svg.addEventListener('contextmenu', e => {
     e.preventDefault();
-    if (appMode === 'player') return;
     const hex = hexFromElement(e.target);
     if (!hex) return;
+    if (appMode === 'player') {
+      const key = `${hex.col},${hex.row}`;
+      if (isolatedPids && !getVisitedCellSet([...isolatedPids]).has(key)) return;
+    }
     showCtxMenu(hex.col, hex.row, e);
   });
 
@@ -3221,7 +3226,7 @@ function showCtxMenu(col, row, e) {
   hdr.textContent=`(${col},${row})`;
   menu.appendChild(hdr);
 
-  if (occ.length === 1) {
+  if (occ.length === 1 && appMode !== 'player') {
     const pid = occ[0];
     const p = getParticipant(pid);
     const moveOpt = document.createElement('div');
@@ -3244,7 +3249,7 @@ function showCtxMenu(col, row, e) {
     byTeam.get(teamIndex).push(pid);
   });
 
-  if (occ.length > 1) [...byTeam.entries()].forEach(([teamIndex, pids]) => {
+  if (occ.length > 1 && appMode !== 'player') [...byTeam.entries()].forEach(([teamIndex, pids]) => {
     const team = teams[teamIndex];
     const item = document.createElement('div');
     item.style.cssText = 'position:relative;padding:5px 10px;cursor:pointer;font-size:.68rem;color:#c8c0b0;display:flex;align-items:center;gap:7px;transition:background .1s;';
@@ -3299,10 +3304,10 @@ function showCtxMenu(col, row, e) {
   noteOpt.onmouseleave = () => noteOpt.style.background='';
   noteOpt.onclick = () => {
     hideCtxMenu();
-    // Visible to players once published — but only on tiles that already pass
-    // the normal fog-of-war gate, same as occupants/events. Adding a note never
-    // reveals a tile early; it just annotates it once it's already visible.
-    const text = prompt(`Note for (${col},${row}) — visible to players (subject to fog of war):`, cs.note || '');
+    // DM notes publish and sync to everyone; a player's own note only lives in
+    // their tab (no Firestore write access) and is preserved locally across
+    // live updates unless the DM later adds their own note to the same tile.
+    const text = prompt(`Note for (${col},${row}):`, cs.note || '');
     if (text === null) return;
     cs.note = text.trim();
     renderHexGrid();
@@ -4546,13 +4551,20 @@ function applyLiveGameState(data, myPids, myName) {
       if (p.hp != null && saved.hp != null) p.hp = saved.hp;
     });
 
+    // Players can't write to Firestore, so any note they add locally lives only
+    // in this tab. Preserve it across incoming snapshots unless the DM has
+    // published their own note for that same cell (DM's note always wins).
+    const localNotes = {};
+    Object.entries(cellStates).forEach(([k,v]) => { if (v.note) localNotes[k] = v.note; });
+
     initCellStates();
     Object.entries(data.cellStates || {}).forEach(([key, cs]) => {
       if (!cellStates[key]) return;
       const events = (cs.events||[]).filter(e => !e.isDeath);
       const migratedCas = (cs.events||[]).filter(e => e.isDeath);
       const casualties = [...migratedCas, ...(cs.casualties||[])];
-      cellStates[key] = {state:cs.state, events, occupants:cs.occupants||[], ...(casualties.length ? {casualties} : {}), ...(cs.note ? {note:cs.note} : {})};
+      const note = cs.note || localNotes[key];
+      cellStates[key] = {state:cs.state, events, occupants:cs.occupants||[], ...(casualties.length ? {casualties} : {}), ...(note ? {note} : {})};
     });
 
     logEntries = data.logEntries ? [...data.logEntries] : [];
