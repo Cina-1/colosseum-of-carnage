@@ -908,6 +908,11 @@ let npcProcessedThisRound = new Set(); // pids that have already acted this roun
 let showZones = true; // toggle for the closing ring zone overlay
 let zonePaused = false;      // when true, the zone stops shrinking at zoneFreezeRound
 let zoneFreezeRound = null;  // round the zone was frozen at, while paused
+// Rounds keep advancing while the zone is paused (gameplay doesn't stop, just
+// the closing ring). This tracks how many rounds have elapsed during past
+// pauses, so the effective zone-shrink round can subtract them out on resume
+// instead of jumping straight to the current round.
+let zoneRoundOffset = 0;
 let collapsedTeams = new Set();     // team indices the DM has manually collapsed
 let expandedElimTeams = new Set();  // eliminated teams the DM has manually re-expanded
 let finalZoneCombatDone = false;    // one-shot flag for the Final Zone mass combat
@@ -1890,7 +1895,7 @@ function renderHexGrid() {
   }
 
   // Closing ring — orange mass on all cells in the closed zone (round 4+), with outer perimeter border
-  const zoneRound = zonePaused && zoneFreezeRound != null ? zoneFreezeRound : round;
+  const zoneRound = zonePaused && zoneFreezeRound != null ? (zoneFreezeRound - zoneRoundOffset) : (round - zoneRoundOffset);
   if (showZones && zoneRound >= 4 && gamePhase !== 'setup') {
     const numClosed = zoneRound - 3;
     const closedMinDist = HEX_RADIUS - numClosed + 1;
@@ -2746,14 +2751,22 @@ function toggleZones() {
 
 function toggleZonePause() {
   zonePaused = !zonePaused;
-  zoneFreezeRound = zonePaused ? round : null;
+  if (zonePaused) {
+    zoneFreezeRound = round;
+  } else {
+    // Whatever rounds ticked by while paused never counted toward the zone —
+    // fold them into the offset so shrinking resumes from where it left off
+    // instead of jumping ahead to match the current round.
+    zoneRoundOffset += round - zoneFreezeRound;
+    zoneFreezeRound = null;
+  }
   const btn = document.getElementById('btn-zone-pause');
   if (btn) {
     btn.textContent = zonePaused ? '▶ Resume Zone' : '⏸ Pause Zone';
     btn.style.borderColor = zonePaused ? 'var(--gold)' : '';
     btn.style.color = zonePaused ? 'var(--gold)' : '';
   }
-  setStatus(zonePaused ? `Zone paused at its Round ${zoneFreezeRound} size.` : 'Zone resumed — shrinking continues.');
+  setStatus(zonePaused ? `Zone paused at its Round ${zoneFreezeRound} size.` : 'Zone resumed — shrinking continues from where it paused.');
   renderHexGrid();
   autoPublishLiveUpdate();
 }
@@ -2959,7 +2972,7 @@ function resetGame() {
   document.getElementById('btn-next-round').style.display = 'none';
   document.getElementById('btn-npc-auto').style.display = 'none';
   updatePhaseButtonVisibility();
-  zonePaused = false; zoneFreezeRound = null;
+  zonePaused = false; zoneFreezeRound = null; zoneRoundOffset = 0;
   npcProcessedThisRound.clear();
   finalZoneCombatDone = false;
   document.getElementById('event-log-list').innerHTML = '';
@@ -3439,7 +3452,7 @@ function buildDMSaveData() {
   return {
     type: 'dm-save', version: 1,
     savedAt: new Date().toISOString(),
-    round, gamePhase, logTick, zonePaused, zoneFreezeRound,
+    round, gamePhase, logTick, zonePaused, zoneFreezeRound, zoneRoundOffset,
     logEntries: [...logEntries],
     participants: participants.map(p => ({...p, visitedCells: [...(p.visitedCells||[])]})),
     cellStates: Object.fromEntries(
@@ -3494,6 +3507,7 @@ function applyDMSave(data) {
   logTick = data.logTick || 0;
   zonePaused = data.zonePaused || false;
   zoneFreezeRound = data.zoneFreezeRound != null ? data.zoneFreezeRound : null;
+  zoneRoundOffset = data.zoneRoundOffset || 0;
 
   // Restore participant state
   (data.participants || []).forEach(saved => {
@@ -3848,7 +3862,7 @@ function returnToTitle() {
   document.getElementById('btn-start').style.display = 'none';
   document.getElementById('btn-next-round').style.display = 'none';
   updatePhaseButtonVisibility();
-  zonePaused = false; zoneFreezeRound = null;
+  zonePaused = false; zoneFreezeRound = null; zoneRoundOffset = 0;
   document.getElementById('event-log-list').innerHTML = '';
   clearAllLogFilters();
   document.getElementById('char-picker-modal').classList.remove('active');
@@ -4412,7 +4426,7 @@ function buildLiveStateData() {
   return {
     type: 'live-game-state', version: 1,
     updatedAt: new Date().toISOString(),
-    round, gamePhase, logTick, zonePaused, zoneFreezeRound,
+    round, gamePhase, logTick, zonePaused, zoneFreezeRound, zoneRoundOffset,
     logEntries: [...logEntries],
     participants: participants.map(p => ({...p, visitedCells: [...(p.visitedCells||[])]})),
     cellStates: Object.fromEntries(
@@ -4624,6 +4638,7 @@ function applyLiveGameState(data, myPids, myName) {
     logTick = data.logTick || 0;
     zonePaused = data.zonePaused || false;
     zoneFreezeRound = data.zoneFreezeRound != null ? data.zoneFreezeRound : null;
+    zoneRoundOffset = data.zoneRoundOffset || 0;
 
     (data.participants || []).forEach(saved => {
       const p = getParticipant(saved.id);
