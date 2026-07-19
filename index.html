@@ -1031,9 +1031,9 @@ function initCellStates() {
 }
 
 // Tile notes are persisted to localStorage (this device/browser) so they
-// survive a page reload/exit — same reasoning as the UI prefs above: DM notes
-// also sync via Firestore, but a player's own notes never do, so without this
-// they'd vanish the moment the tab closed.
+// survive a page reload/exit — same reasoning as the UI prefs above. Notes are
+// never synced via Firestore either (DM's own and each player's own are both
+// private to that device), so without this they'd vanish the moment the tab closed.
 function loadStoredTileNotes() {
   try { return JSON.parse(localStorage.getItem('carnage-tile-notes') || '{}'); } catch { return {}; }
 }
@@ -3379,9 +3379,7 @@ function showCtxMenu(col, row, e) {
   noteOpt.onmouseleave = () => noteOpt.style.background='';
   noteOpt.onclick = () => {
     hideCtxMenu();
-    // DM notes publish and sync to everyone; a player's own note only lives in
-    // their tab (no Firestore write access) and is preserved locally across
-    // live updates unless the DM later adds their own note to the same tile.
+    // Private to this device — never synced or shown to anyone else, DM or player.
     const text = prompt(`Note for (${col},${row}):`, cs.note || '');
     if (text === null) return;
     cs.note = text.trim();
@@ -4413,8 +4411,10 @@ function buildLiveStateData() {
     round, gamePhase, logTick, zonePaused, zoneFreezeRound, zoneRoundOffset,
     logEntries: [...logEntries],
     participants: participants.map(p => ({...p, visitedCells: [...(p.visitedCells||[])]})),
+    // Notes are deliberately excluded — they're a private, per-device annotation
+    // (DM's own or a player's own), never meant to sync/broadcast to anyone else.
     cellStates: Object.fromEntries(
-      Object.entries(cellStates).map(([k,v]) => [k, {state:v.state, events:[...v.events], occupants:[...v.occupants], casualties:[...(v.casualties||[])], ...(v.note ? {note:v.note} : {})}])
+      Object.entries(cellStates).map(([k,v]) => [k, {state:v.state, events:[...v.events], occupants:[...v.occupants], casualties:[...(v.casualties||[])]}])
     ),
     parties: liveSyncGroups,
   };
@@ -4633,10 +4633,9 @@ function applyLiveGameState(data, myPids, myName) {
       if (p.hp != null && saved.hp != null) p.hp = saved.hp;
     });
 
-    // Players can't write to Firestore, so any note they add locally lives only
-    // in this tab, persisted to localStorage so it survives a reload. Preserve
-    // it across incoming snapshots unless the DM has published their own note
-    // for that same cell (DM's note always wins).
+    // Notes are never part of the published snapshot (DM's own notes stay on
+    // their device, same as a player's) — just keep whatever this tab already
+    // has locally, persisted to localStorage so it survives a reload.
     initCellStates();
     applyStoredTileNotes();
     Object.entries(data.cellStates || {}).forEach(([key, cs]) => {
@@ -4644,7 +4643,7 @@ function applyLiveGameState(data, myPids, myName) {
       const events = (cs.events||[]).filter(e => !e.isDeath);
       const migratedCas = (cs.events||[]).filter(e => e.isDeath);
       const casualties = [...migratedCas, ...(cs.casualties||[])];
-      const note = cs.note || cellStates[key].note;
+      const note = cellStates[key].note;
       cellStates[key] = {state:cs.state, events, occupants:cs.occupants||[], ...(casualties.length ? {casualties} : {}), ...(note ? {note} : {})};
     });
 
