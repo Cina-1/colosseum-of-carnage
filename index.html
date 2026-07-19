@@ -1335,30 +1335,14 @@ function moveParticipant(pid, col, row, forcedGroup) {
 
   const team = teams[p.teamIndex];
 
-  // NPC manual move: suppress tile-event roll modal, auto-resolve any NPC contact
+  // NPC manual move: suppress tile-event roll modal. Combat is never auto-rolled
+  // here — a DM manually placing/dragging NPCs together is a deliberate setup
+  // action, not an encounter roll, so it shouldn't force a fight on its own. If
+  // the DM wants them to fight, that's Combat Log / manual HP adjustment, or a
+  // different NPC moving into this tile later during NPC Auto (which still
+  // rolls its own engagement chance normally).
   if (gamePhase === 'running' && p.hp != null) {
     toMove.forEach(id => npcProcessedThisRound.add(id));
-    const csNow = cellStates[`${col},${row}`];
-    const hostiles = csNow.occupants
-      .map(id => getParticipant(id))
-      .filter(ep => ep && ep.alive && ep.hp != null && ep.teamIndex !== p.teamIndex && !toMove.includes(ep.id));
-    if (hostiles.length > 0 && !(col === CENTER_COL && row === CENTER_ROW)) {
-      if (Math.random() < 0.80) {
-        const byTeam = {};
-        csNow.occupants
-          .filter(id => { const ep = getParticipant(id); return ep?.alive && ep.hp != null; })
-          .forEach(id => { const ep = getParticipant(id); if (!byTeam[ep.teamIndex]) byTeam[ep.teamIndex]=[]; byTeam[ep.teamIndex].push(id); });
-        const tidxs = Object.keys(byTeam);
-        const combats = [];
-        for (let i=0;i<tidxs.length;i++) for (let j=i+1;j<tidxs.length;j++)
-          combats.push(resolveCombat(byTeam[tidxs[i]], byTeam[tidxs[j]]));
-        const involvedIds = csNow.occupants.filter(id => { const ep=getParticipant(id); return ep?.alive && ep.hp != null; });
-        applyNpcCombatToTile(combats, col, row, involvedIds);
-      } else {
-        addLog(`contact avoided — no combat.`, 'npc', pid,
-          {col, row, nameHtml:`<b>${p.name}</b> — <b>${team.name}</b>`});
-      }
-    }
     addLog(`moved to (${col},${row}).`, 'npc', pid, {col, row, nameHtml:`<b>${p.name}</b> — <b>${team.name}</b>`});
     if (selectedCell) renderCellInfo(selectedCell.col, selectedCell.row);
     return;
